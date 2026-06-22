@@ -40,8 +40,8 @@ let
 
   # SRI hashes for the published release tarballs (nix store prefetch-file <url>).
   hashes = {
-    "darwin-arm64" = "sha256-1jhSKIEH0pRIlup113Nl8YWY23w6hvgk8ewtOTawoqQ=";
-    "linux-amd64" = "sha256-j+MUGHl8omKtd9dnCfJbDJG0IAohjLh7jXseaPvDC8Q=";
+    "darwin-arm64" = "sha256-TVHhcokWPn4Z/o0JadP4/UOTEperiM56TKjbLWhrtkI=";
+    "linux-amd64" = "sha256-i7WuK95FQfcCd2wj+tPNyuu5ryz4DYsbVzP2S02OJYI=";
   };
 
   src = fetchurl {

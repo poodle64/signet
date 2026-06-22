@@ -18,7 +18,7 @@ class Signet < Formula
   on_macos do
     on_arm do
       url "https://github.com/poodle64/signet/releases/download/v#{version}/signet-#{version}-darwin-arm64.tar.gz"
-      sha256 "d63852288107d2944896ea75d77365f18598db7c3a86f824f1ec2d3936b0a2a4"
+      sha256 "4d51e17289163e7e19fe8d0969d3f8fd43931297ab88ce7a4ca8db2d686bb642"
     end
 
     on_intel do
@@ -30,7 +30,7 @@ class Signet < Formula
   on_linux do
     on_intel do
       url "https://github.com/poodle64/signet/releases/download/v#{version}/signet-#{version}-linux-amd64.tar.gz"
-      sha256 "8fe31418797ca262ad77d76709f25b0c91b4200a218cb87b8d7b1e68fbc30bc4"
+      sha256 "8bb5ae2bde4541f702776c23fad3cdcaebb9af2cf80d8b1b5733f64b4d8e2582"
     end
 
     on_arm do
