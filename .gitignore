@@ -1,0 +1,14 @@
+# Go build output
+/signet
+/signet.exe
+
+# Swift Secure-Enclave shim build output (compiled into the binary by `make build`)
+/se_swift.o
+/libsignet_se.a
+
+# Internal product docs — the maintainer record of intent and rationale, kept out
+# of the published repo by convention. The outward-facing "why" lives in README.md.
+/docs/product/
+
+# Editor / OS noise
+.DS_Store
