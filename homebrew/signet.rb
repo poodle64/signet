@@ -7,7 +7,7 @@
 #
 # SECURE ENCLAVE: the SE backend works on the pre-built release binary (unsigned/ad-hoc).
 # It uses CryptoKit's self-stored-key-blob model — the Enclave's opaque hardware-wrapped
-# blob is stored in a file (~/.local/share/signet/), the keychain is never
+# blob is stored in a file (~/.signet/), the keychain is never
 # touched, and no code-signing entitlement is required. All three backends work unsigned.
 class Signet < Formula
   desc "Single Go binary for hardware-rooted machine identity; TPM, PIV, and Secure Enclave all work on the unsigned release binary"

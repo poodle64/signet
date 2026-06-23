@@ -336,7 +336,7 @@ func TestLoadCache_MissingFile(t *testing.T) {
 // TestLoadCache_CorruptFile verifies loadCache returns nil for malformed JSON.
 func TestLoadCache_CorruptFile(t *testing.T) {
 	home := setTempHome(t)
-	cDir := filepath.Join(home, ".cache", "signet")
+	cDir := filepath.Join(home, ".signet", "cache")
 	if err := os.MkdirAll(cDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
