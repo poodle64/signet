@@ -1,0 +1,153 @@
+# Building from source
+
+signet is a single self-contained Go binary with three secure-hardware backends
+compiled in (Apple Secure Enclave, TPM 2.0, and YubiKey/PIV). Two of those
+backends link C, so building signet is not a plain `go build`; it is always a
+native, per-platform build driven by `make`. This guide covers the prerequisites,
+the `make build` flow on each platform, running the tests, the cross-compilation
+constraint, and the release and distribution toolchain.
+
+## Prerequisites
+
+- **Go 1.25** (the module targets `go 1.25.0`). Install it through the project's
+  normal toolchain; do not curl a tarball.
+- **A cgo toolchain.** cgo is required because the Secure Enclave backend links a
+  Swift shim and the PIV backend links PC/SC. A working C compiler must be on the
+  `PATH` and `CGO_ENABLED=1` (the Makefile sets this for you).
+- **On macOS:** the Xcode command line tools, so that `xcrun swiftc` is available.
+  The Secure Enclave backend is compiled from `se_swift.swift`, a small CryptoKit
+  shim. The Swift runtime ships with macOS, so the finished binary stays
+  self-contained; there is no sidecar and no helper process.
+- **On Linux:** the PC/SC development headers for the PIV backend's cgo link
+  (`libpcsclite-dev` on Debian/Ubuntu). TPM support is pure Go and needs no extra
+  system library.
+
+## The make build flow
+
+Always build with `make build`, never a bare `go build`. The Makefile branches on
+the host operating system.
+
+```sh
+make build       # builds ./signet
+make test        # runs the test suite
+make clean        # removes the binary and the Swift intermediates
+```
+
+### On macOS
+
+`make build` runs two steps in order:
+
+1. **Compile the Swift shim to a static archive.** `xcrun swiftc -O -emit-object
+   -parse-as-library se_swift.swift` produces an object file, then `ar rcs`
+   archives it into `libsignet_se.a`.
+2. **Build the Go binary against that archive.** `CGO_ENABLED=1 go build` links
+   `libsignet_se.a` into the one binary via cgo.
+
+The first step is a Make prerequisite of the second, so a fresh checkout produces
+the archive automatically; the archive is only rebuilt when `se_swift.swift`
+changes.
+
+### On Linux and Windows
+
+There is no Swift step. `signer_darwin.go` is build-tagged `//go:build darwin`, so
+on every other platform the Secure Enclave code is excluded and the build is:
+
+```sh
+make build
+```
+
+The Makefile target reduces internally to a single `CGO_ENABLED=1 go build` on
+non-darwin platforms. cgo is still enabled because the PIV backend links PC/SC;
+the TPM backend is pure Go and needs no C.
+
+### Why plain "go build" fails on macOS
+
+On macOS the Secure Enclave backend's cgo directives expect the symbols provided by
+`libsignet_se.a`. If that archive does not exist yet, the linker has nothing to
+resolve those symbols against and the build fails at link time. `make build`
+creates the archive first, which is why it is the only supported way to build the
+Mac binary. If you must run `go build` directly, run the `xcrun swiftc` and `ar`
+steps first (or simply let `make build` do it).
+
+## Running the tests
+
+```sh
+make test        # CGO_ENABLED=1 go test ./...
+```
+
+On macOS this depends on `libsignet_se.a` in the same way `make build` does, so the
+Swift step runs first if needed.
+
+### The tpmsimulator build tag
+
+The TPM backend has tests that run against the go-tpm software simulator. That
+simulator pulls in an OpenSSL dependency, which has no place in a normal build, so
+those tests are gated behind a build tag and are skipped by default. Run them
+explicitly with:
+
+```sh
+go test -tags tpmsimulator ./...
+```
+
+This keeps the everyday `make test` fast and dependency-light while still letting
+you exercise the TPM signing path without real TPM hardware.
+
+## The per-platform native-build constraint
+
+cgo cannot be cross-compiled without a matching target sysroot and C toolchain, so
+signet's C-linked backends force native, per-platform builds:
+
+- **Secure Enclave** links the macOS Swift shim and builds only on a Mac.
+- **YubiKey/PIV** links PC/SC and builds natively on each platform's C toolchain.
+- **TPM 2.0** is pure Go (`go-tpm`) and compiles on every platform with no C step.
+
+The practical consequence: you build each platform's binary on that platform (the
+release workflow uses one runner per target). You cannot produce a macOS binary on
+Linux, or vice versa, from a single `GOOS`/`GOARCH` switch.
+
+## Release and distribution toolchain
+
+### Per-platform release binaries
+
+Releases are cut from the `release` workflow (`.github/workflows/release.yaml`),
+triggered by pushing a `v*` tag or dispatched manually. It builds one tarball per
+platform on its own native runner, with the matrix currently covering:
+
+- **aarch64-darwin** (`darwin/arm64`): built with `make build`, so the Swift shim
+  is compiled first; the binary is then ad-hoc code-signed (the Secure Enclave
+  backend works on an unsigned binary; the ad-hoc signature only satisfies macOS
+  Gatekeeper quarantine on downloads).
+- **x86_64-linux** (`linux/amd64`): built with `make build` after installing the
+  PC/SC headers for the PIV cgo link.
+
+Each job packages a `signet-<version>-<os>-<arch>.tar.gz` plus a `.sha256`
+checksum and uploads them to the GitHub Release. Intel-Mac and Linux-arm64 targets
+are not built yet; adding one is a new matrix row plus its runner.
+
+### Homebrew tap
+
+signet ships through a Homebrew tap, so users install with:
+
+```sh
+brew install poodle64/tap/signet
+```
+
+The formula lives at `homebrew/signet.rb` in this repo and points at the
+per-platform release tarballs.
+
+### Nix derivation
+
+For Nix users there is a `fetchurl` + SRI derivation at `nix/signet.nix`. It does
+not build the Go source; it downloads the published release tarball for the host
+platform and installs the binary, pinning it by SRI hash for supply-chain
+integrity. Copy it into your Nix configuration and add it to your packages:
+
+```nix
+home.packages = [ (pkgs.callPackage ./signet.nix { }) ];
+```
+
+When a new release is cut, bump `version` in the derivation and refresh the SRI
+hash for each platform in its `hashes` set; `nix store prefetch-file <url>` (or the
+hash-mismatch build error) yields the value. The derivation declares the same two
+platforms as the release matrix (`aarch64-darwin`, `x86_64-linux`) and throws at
+evaluation time for any platform not yet built.
