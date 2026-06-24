@@ -4,6 +4,21 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.6.1] - 2026-06-24
+
+### Changed
+
+- `signet auth` no longer takes an identity-id argument; the form is now `signet auth <broker-url>`. The broker resolves the calling consumer by its enrolled public key (resolve-by-key, the SSH `authorized_keys` model) rather than by a presented id, so a consumer holds no identity id at all. `SIGNET_IDENTITY` still selects which local hardware keypair signs the challenge. This is a breaking change to the `auth` invocation for any consumer that previously passed an id.
+
+### Fixed
+
+- Corrected stale `~/.signet` path references in a packaging comment and a test (the Secure-Enclave key blob lives under the platform data dir, not `~/.signet`).
+
+### Documentation
+
+- Rewrote the README to the household standard and added usage, configuration, backend, and building guides.
+- Documented `SIGNET_IDENTITY` as the local keypair selector (the SSH-keyfile model).
+
 ## [2026.6.0] - 2026-06-22
 
 First public release. signet was split out of the Portcullis repository into its own standalone repository and published. This is the first release installable without repository access.
