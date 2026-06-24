@@ -160,6 +160,26 @@ func (s *tpmSigner) Enrol(_ bool) (string, error) {
 	return tpmPublicToSPKI(pub)
 }
 
+// PublicKeyDER returns the enrolled public key as base64-encoded SPKI DER
+// without generating a new key. Returns an error when no TPM device is found
+// or when the persistent handle holds no key.
+func (s *tpmSigner) PublicKeyDER() (string, error) {
+	t, err := openTPM()
+	if err != nil {
+		return "", fmt.Errorf("TPM: open device: %w", err)
+	}
+	if t == nil {
+		return "", fmt.Errorf("TPM: no TPM device found")
+	}
+	defer t.Close()
+
+	_, pub, err := tpmCreateOrLoadPersistent(t)
+	if err != nil {
+		return "", err
+	}
+	return tpmPublicToSPKI(pub)
+}
+
 func (s *tpmSigner) Sign(message string) (string, error) {
 	t, err := openTPM()
 	if err != nil {

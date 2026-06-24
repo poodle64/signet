@@ -18,7 +18,7 @@
 //
 //	signet enrol [--user-presence]
 //	signet sign <message>
-//	signet auth <broker-url> <identity-id>
+//	signet auth <broker-url>
 //
 // Environment variables:
 //
@@ -28,7 +28,8 @@
 //	                to one key blob and so one public key, letting one Mac hold more
 //	                than one identity; without it every consumer on a box would share
 //	                one key. The name is local-only and never sent to the broker,
-//	                which identifies a consumer by its public key (default: "consumer")
+//	                which resolves the identity from the presented public key
+//	                (resolve-by-key, #73). (default: "consumer")
 package main
 
 import (
@@ -85,14 +86,14 @@ func run(args []string) error {
 		return nil
 
 	case "auth":
-		if len(args) < 3 {
-			return fmt.Errorf("usage: signet auth <broker-url> <identity-id>")
+		if len(args) < 2 {
+			return fmt.Errorf("usage: signet auth <broker-url>")
 		}
 		signer, err := newSigner()
 		if err != nil {
 			return err
 		}
-		return cmdAuth(signer, args[1], args[2])
+		return cmdAuth(signer, args[1])
 
 	default:
 		return fmt.Errorf("unknown subcommand %q; expected enrol|sign|auth\n%s", subcommand, usageLine())
@@ -100,7 +101,7 @@ func run(args []string) error {
 }
 
 func usageLine() string {
-	return "usage: signet <enrol [--user-presence] | sign <message> | auth <broker-url> <identity-id>>"
+	return "usage: signet <enrol [--user-presence] | sign <message> | auth <broker-url>>"
 }
 
 func usage() error {

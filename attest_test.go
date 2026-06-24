@@ -12,21 +12,36 @@ import (
 	"time"
 )
 
-// stubSigner is a hardware-free Signer that returns a canned signature.
+// stubSPKI is a minimal valid base64-encoded SPKI DER for a P-256 public key.
+// Computed from the real encoding so publicKeyFingerprint can decode it cleanly.
+// (The bytes spell out an ASN.1 SEQUENCE wrapping the P-256 algorithm OID and a
+// placeholder bit-string; they do not need to represent a real key for cache tests.)
+const stubSPKI = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAQIDBAUGBwgJCgsMDQ4PEBESExQV" +
+	"FhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4/"
+
+// stubSigner is a hardware-free Signer that returns a canned signature and
+// a deterministic public key (stubSPKI) for use in tests.
 type stubSigner struct {
-	sig string
-	err error
+	sig    string
+	err    error
+	pubKey string // overrides stubSPKI when non-empty
 }
 
-func (s *stubSigner) Enrol(_ bool) (string, error)  { return "stub-spki", nil }
+func (s *stubSigner) Enrol(_ bool) (string, error) { return stubSPKI, nil }
+func (s *stubSigner) PublicKeyDER() (string, error) {
+	if s.pubKey != "" {
+		return s.pubKey, nil
+	}
+	return stubSPKI, nil
+}
 func (s *stubSigner) Sign(_ string) (string, error) { return s.sig, s.err }
 
 // fakeNow is a shared reference time for test tokens.
 var fakeNow = time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
 
 // fakeBroker builds a fake attestation broker using httptest. It serves:
-//   - POST /v1/attest/challenge  → challengeResult
-//   - POST /v1/attest/token     → tokenResult (expiresAt = fakeNow + ttl)
+//   - POST /v1/attest/challenge  → challengeResult (verifies public_key_der present)
+//   - POST /v1/attest/token     → tokenResult (verifies identity_id absent)
 //   - POST /v1/attest/renew     → tokenResult or 401 if renewStatus401 is set
 func fakeBroker(t *testing.T, ttl time.Duration, renewStatus401 bool) *httptest.Server {
 	t.Helper()
@@ -37,6 +52,20 @@ func fakeBroker(t *testing.T, ttl time.Duration, renewStatus401 bool) *httptest.
 		if r.Method != http.MethodPost {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		// Verify wire contract: public_key_der must be present, identity_id must not.
+		if _, ok := body["public_key_der"]; !ok {
+			t.Errorf("challenge body missing public_key_der: %v", body)
+			http.Error(w, "missing public_key_der", http.StatusBadRequest)
+			return
+		}
+		if _, ok := body["identity_id"]; ok {
+			t.Errorf("challenge body must not contain identity_id (resolve-by-key): %v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(challengeResult{
@@ -50,6 +79,15 @@ func fakeBroker(t *testing.T, ttl time.Duration, renewStatus401 bool) *httptest.
 		if r.Method != http.MethodPost {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		// Verify wire contract: identity_id must NOT be present.
+		if _, ok := body["identity_id"]; ok {
+			t.Errorf("token body must not contain identity_id (resolve-by-key): %v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(tokenResult{
@@ -91,6 +129,17 @@ func setTempHome(t *testing.T) string {
 	return dir
 }
 
+// mustFingerprint computes the public key fingerprint for spkiB64 or fails the
+// test. Used to compute expected cache keys without duplicating the logic.
+func mustFingerprint(t *testing.T, spkiB64 string) string {
+	t.Helper()
+	fp, err := publicKeyFingerprint(spkiB64)
+	if err != nil {
+		t.Fatalf("publicKeyFingerprint: %v", err)
+	}
+	return fp
+}
+
 // TestCmdAuth_ColdCache verifies a fresh attestation when no cache exists.
 func TestCmdAuth_ColdCache(t *testing.T) {
 	setTempHome(t)
@@ -98,12 +147,13 @@ func TestCmdAuth_ColdCache(t *testing.T) {
 	defer srv.Close()
 
 	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL, "id-test"); err != nil {
+	if err := cmdAuth(signer, srv.URL); err != nil {
 		t.Fatalf("cmdAuth: %v", err)
 	}
 
-	// Cache should now exist on disk.
-	bc := loadCache(srv.URL, "id-test")
+	// Cache should now exist on disk, keyed by fingerprint.
+	fp := mustFingerprint(t, stubSPKI)
+	bc := loadCache(srv.URL, fp)
 	if bc == nil {
 		t.Fatal("expected cache to be written after fresh attest, got nil")
 	}
@@ -117,7 +167,8 @@ func TestCmdAuth_ColdCache(t *testing.T) {
 func TestCmdAuth_WarmCache(t *testing.T) {
 	setTempHome(t)
 
-	// Write a warm cache (TTL > 30 min).
+	// Write a warm cache (TTL > 30 min), keyed by the stub's key fingerprint.
+	fp := mustFingerprint(t, stubSPKI)
 	bc := &bearerCache{
 		Key:          "cached-key",
 		ExpiresAt:    time.Now().Add(2 * time.Hour),
@@ -132,12 +183,12 @@ func TestCmdAuth_WarmCache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := saveCache(srv.URL, "id-warm", bc); err != nil {
+	if err := saveCache(srv.URL, fp, bc); err != nil {
 		t.Fatalf("saveCache: %v", err)
 	}
 
 	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL, "id-warm"); err != nil {
+	if err := cmdAuth(signer, srv.URL); err != nil {
 		t.Fatalf("cmdAuth: %v", err)
 	}
 	if callCount > 0 {
@@ -150,6 +201,8 @@ func TestCmdAuth_WarmCache(t *testing.T) {
 func TestCmdAuth_NearExpiry(t *testing.T) {
 	setTempHome(t)
 
+	fp := mustFingerprint(t, stubSPKI)
+
 	// Near-expiry cache: TTL = 10 minutes.
 	bc := &bearerCache{
 		Key:          "near-expiry-key",
@@ -159,16 +212,16 @@ func TestCmdAuth_NearExpiry(t *testing.T) {
 	srv := fakeBroker(t, 2*time.Hour, false)
 	defer srv.Close()
 
-	if err := saveCache(srv.URL, "id-near", bc); err != nil {
+	if err := saveCache(srv.URL, fp, bc); err != nil {
 		t.Fatalf("saveCache: %v", err)
 	}
 
 	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL, "id-near"); err != nil {
+	if err := cmdAuth(signer, srv.URL); err != nil {
 		t.Fatalf("cmdAuth: %v", err)
 	}
 
-	updated := loadCache(srv.URL, "id-near")
+	updated := loadCache(srv.URL, fp)
 	if updated == nil {
 		t.Fatal("expected cache to be updated after renew")
 	}
@@ -182,6 +235,8 @@ func TestCmdAuth_NearExpiry(t *testing.T) {
 func TestCmdAuth_Renew401_ReAttests(t *testing.T) {
 	setTempHome(t)
 
+	fp := mustFingerprint(t, stubSPKI)
+
 	// Near-expiry cache.
 	bc := &bearerCache{
 		Key:          "old-key",
@@ -192,17 +247,17 @@ func TestCmdAuth_Renew401_ReAttests(t *testing.T) {
 	srv := fakeBroker(t, 2*time.Hour, true)
 	defer srv.Close()
 
-	if err := saveCache(srv.URL, "id-re-attest", bc); err != nil {
+	if err := saveCache(srv.URL, fp, bc); err != nil {
 		t.Fatalf("saveCache: %v", err)
 	}
 
 	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL, "id-re-attest"); err != nil {
+	if err := cmdAuth(signer, srv.URL); err != nil {
 		t.Fatalf("cmdAuth: %v", err)
 	}
 
 	// After re-attest, cache should carry the fresh key from /token.
-	updated := loadCache(srv.URL, "id-re-attest")
+	updated := loadCache(srv.URL, fp)
 	if updated == nil {
 		t.Fatal("expected cache after re-attest")
 	}
@@ -215,15 +270,16 @@ func TestCmdAuth_Renew401_ReAttests(t *testing.T) {
 func TestCacheRoundTrip(t *testing.T) {
 	setTempHome(t)
 
+	fp := mustFingerprint(t, stubSPKI)
 	want := &bearerCache{
 		Key:          "round-trip-key",
 		ExpiresAt:    fakeNow.Add(1 * time.Hour).UTC(),
 		MaxExpiresAt: fakeNow.Add(24 * time.Hour).UTC(),
 	}
-	if err := saveCache("http://broker.test", "id-rt", want); err != nil {
+	if err := saveCache("http://broker.test", fp, want); err != nil {
 		t.Fatalf("saveCache: %v", err)
 	}
-	got := loadCache("http://broker.test", "id-rt")
+	got := loadCache("http://broker.test", fp)
 	if got == nil {
 		t.Fatal("loadCache returned nil")
 	}
@@ -297,27 +353,31 @@ func TestBearerCacheFromToken(t *testing.T) {
 	}
 }
 
-// TestCachePath verifies the cache path is deterministic and safe.
+// TestCachePath verifies the cache path is deterministic and safe, and that
+// different fingerprints produce different paths (resolve-by-key cache isolation).
 func TestCachePath(t *testing.T) {
 	setTempHome(t)
-	p1, err := cachePath("http://localhost:8311", "id-abc")
+
+	fp1 := mustFingerprint(t, stubSPKI)
+	p1, err := cachePath("http://localhost:8311", fp1)
 	if err != nil {
 		t.Fatalf("cachePath: %v", err)
 	}
-	p2, err := cachePath("http://localhost:8311", "id-abc")
+	p2, err := cachePath("http://localhost:8311", fp1)
 	if err != nil {
 		t.Fatalf("cachePath (2nd call): %v", err)
 	}
 	if p1 != p2 {
 		t.Errorf("cachePath is not deterministic: %q vs %q", p1, p2)
 	}
-	// Different identity → different path.
-	p3, err := cachePath("http://localhost:8311", "id-xyz")
+	// Different fingerprint → different path.
+	fp2 := "abcdef0123456789" // a distinct 16-hex-char fingerprint
+	p3, err := cachePath("http://localhost:8311", fp2)
 	if err != nil {
-		t.Fatalf("cachePath (id-xyz): %v", err)
+		t.Fatalf("cachePath (fp2): %v", err)
 	}
 	if p1 == p3 {
-		t.Errorf("different identities produced the same cache path: %q", p1)
+		t.Errorf("different fingerprints produced the same cache path: %q", p1)
 	}
 	// Path must be inside the expected directory.
 	if base := filepath.Base(p1); base == "" {
@@ -325,10 +385,34 @@ func TestCachePath(t *testing.T) {
 	}
 }
 
+// TestPublicKeyFingerprint verifies the fingerprint function produces a 16-char
+// hex string and is deterministic.
+func TestPublicKeyFingerprint(t *testing.T) {
+	fp, err := publicKeyFingerprint(stubSPKI)
+	if err != nil {
+		t.Fatalf("publicKeyFingerprint: %v", err)
+	}
+	if len(fp) != 16 {
+		t.Errorf("fingerprint length = %d, want 16: %q", len(fp), fp)
+	}
+	// Deterministic.
+	fp2, err := publicKeyFingerprint(stubSPKI)
+	if err != nil {
+		t.Fatalf("publicKeyFingerprint (2nd): %v", err)
+	}
+	if fp != fp2 {
+		t.Errorf("fingerprint not deterministic: %q vs %q", fp, fp2)
+	}
+	// Bad base64 → error.
+	if _, err := publicKeyFingerprint("not!!base64"); err == nil {
+		t.Error("expected error for invalid base64, got nil")
+	}
+}
+
 // TestLoadCache_MissingFile verifies loadCache returns nil for a nonexistent file.
 func TestLoadCache_MissingFile(t *testing.T) {
 	setTempHome(t)
-	if bc := loadCache("http://no.such.broker", "id-missing"); bc != nil {
+	if bc := loadCache("http://no.such.broker", "abcdef0123456789"); bc != nil {
 		t.Errorf("expected nil for missing cache, got %+v", bc)
 	}
 }

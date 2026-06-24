@@ -3,6 +3,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +54,21 @@ func sanitiseHost(brokerURL string) string {
 	return r.Replace(brokerURL)
 }
 
+// publicKeyFingerprint returns the first 16 hex characters of the SHA-256
+// digest of the raw DER bytes encoded in spkiB64. This matches the broker's
+// _public_key_fingerprint() (src/portcullis/auth/hardware_identity.py).
+// The fingerprint is used as the bearer-cache discriminator, replacing the
+// legacy identity_id — one fingerprint per enrolled key, independent of any
+// broker-side identity name.
+func publicKeyFingerprint(spkiB64 string) (string, error) {
+	der, err := base64.StdEncoding.DecodeString(spkiB64)
+	if err != nil {
+		return "", fmt.Errorf("decode SPKI base64: %w", err)
+	}
+	sum := sha256.Sum256(der)
+	return hex.EncodeToString(sum[:])[:16], nil
+}
+
 // signetHome returns signet's single data directory (~/.signet). All persistent
 // state — the SE key blobs and the bearer cache — lives under it, so one
 // dotfolder holds everything signet writes (the household ~/.tool convention,
@@ -77,22 +95,22 @@ func cacheDir() (string, error) {
 	return dir, nil
 }
 
-// cachePath returns the bearer-cache file path, keyed by broker URL AND identity
-// so re-enrolling (a new identity for the same broker) never serves a stale bearer
-// minted for the old identity.
-func cachePath(brokerURL, identityID string) (string, error) {
+// cachePath returns the bearer-cache file path, keyed by broker URL AND the
+// public key fingerprint so re-enrolling (a new key for the same broker) never
+// serves a stale bearer minted for the old key.
+func cachePath(brokerURL, fingerprint string) (string, error) {
 	dir, err := cacheDir()
 	if err != nil {
 		return "", err
 	}
-	name := sanitiseHost(brokerURL) + "_" + sanitiseHost(identityID) + ".json"
+	name := sanitiseHost(brokerURL) + "_" + fingerprint + ".json"
 	return filepath.Join(dir, name), nil
 }
 
 // loadCache reads the bearer cache from disk. Returns nil (not an error) if
 // the file does not exist or cannot be parsed.
-func loadCache(brokerURL, identityID string) *bearerCache {
-	path, err := cachePath(brokerURL, identityID)
+func loadCache(brokerURL, fingerprint string) *bearerCache {
+	path, err := cachePath(brokerURL, fingerprint)
 	if err != nil {
 		return nil
 	}
@@ -108,8 +126,8 @@ func loadCache(brokerURL, identityID string) *bearerCache {
 }
 
 // saveCache writes the bearer cache to disk with mode 0600.
-func saveCache(brokerURL, identityID string, bc *bearerCache) error {
-	path, err := cachePath(brokerURL, identityID)
+func saveCache(brokerURL, fingerprint string, bc *bearerCache) error {
+	path, err := cachePath(brokerURL, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -201,10 +219,20 @@ func bearerCacheFromToken(tr tokenResult) (*bearerCache, error) {
 
 // attestFresh performs legs 1 and 2 of the attestation protocol:
 // /v1/attest/challenge then /v1/attest/token.
-func attestFresh(signer Signer, brokerURL, identityID string) (*bearerCache, error) {
-	// Leg 1: request a challenge.
+//
+// The broker resolves the identity from the presented public key (resolve-by-key,
+// #73). Leg 1 sends {"public_key_der": <spki-b64>}; leg 2 sends only
+// {challenge_id, nonce, signature_b64} — identity_id is not sent.
+func attestFresh(signer Signer, brokerURL string) (*bearerCache, error) {
+	// Obtain the enrolled public key; fail fast if no key has been enrolled.
+	spkiB64, err := signer.PublicKeyDER()
+	if err != nil {
+		return nil, fmt.Errorf("get public key: %w", err)
+	}
+
+	// Leg 1: request a challenge, presenting the public key.
 	var cr challengeResult
-	if err := brokerPost(brokerURL+"/v1/attest/challenge", map[string]string{"identity_id": identityID}, "", &cr); err != nil {
+	if err := brokerPost(brokerURL+"/v1/attest/challenge", map[string]string{"public_key_der": spkiB64}, "", &cr); err != nil {
 		return nil, fmt.Errorf("attest/challenge: %w", err)
 	}
 
@@ -215,9 +243,9 @@ func attestFresh(signer Signer, brokerURL, identityID string) (*bearerCache, err
 		return nil, fmt.Errorf("sign challenge: %w", err)
 	}
 
-	// Leg 2: exchange the signature for a bearer.
+	// Leg 2: exchange the signature for a bearer. identity_id is NOT sent —
+	// the broker resolves the identity from the public key stored at leg 1.
 	tokenBody := map[string]string{
-		"identity_id":   identityID,
 		"challenge_id":  cr.ChallengeID,
 		"nonce":         cr.Nonce,
 		"signature_b64": sigB64,
@@ -247,8 +275,21 @@ func renewBearer(brokerURL, currentKey string) (*bearerCache, error) {
 // cmdAuth is the credential-helper entry point. It tries the disk cache,
 // renews when within 30 min of expiry, re-attests on 401 or past max lifetime,
 // and prints {"Authorization":"Bearer <key>"} to stdout.
-func cmdAuth(signer Signer, brokerURL, identityID string) error {
-	if cached := loadCache(brokerURL, identityID); cached != nil {
+//
+// The bearer cache is keyed by broker URL and the enrolled public key's
+// fingerprint (resolve-by-key, #73). identity_id is no longer used.
+func cmdAuth(signer Signer, brokerURL string) error {
+	// Derive the fingerprint from the enrolled public key to key the cache.
+	spkiB64, err := signer.PublicKeyDER()
+	if err != nil {
+		return fmt.Errorf("get public key: %w", err)
+	}
+	fingerprint, err := publicKeyFingerprint(spkiB64)
+	if err != nil {
+		return fmt.Errorf("compute key fingerprint: %w", err)
+	}
+
+	if cached := loadCache(brokerURL, fingerprint); cached != nil {
 		ttl := time.Until(cached.ExpiresAt)
 		maxAlive := time.Until(cached.MaxExpiresAt)
 		if ttl > 0 && maxAlive > 0 {
@@ -264,7 +305,7 @@ func cmdAuth(signer Signer, brokerURL, identityID string) error {
 				fmt.Fprintf(os.Stderr, "signet: renew failed, re-attesting: %v\n", err)
 			} else if renewed != nil {
 				// Best-effort save; still return the key even if the write fails.
-				_ = saveCache(brokerURL, identityID, renewed)
+				_ = saveCache(brokerURL, fingerprint, renewed)
 				printAuthHeader(renewed.Key)
 				return nil
 			}
@@ -273,12 +314,12 @@ func cmdAuth(signer Signer, brokerURL, identityID string) error {
 	}
 
 	// Fresh attestation.
-	bc, err := attestFresh(signer, brokerURL, identityID)
+	bc, err := attestFresh(signer, brokerURL)
 	if err != nil {
 		return err
 	}
 	// Best-effort; return the bearer even if we cannot cache it.
-	_ = saveCache(brokerURL, identityID, bc)
+	_ = saveCache(brokerURL, fingerprint, bc)
 	printAuthHeader(bc.Key)
 	return nil
 }

@@ -96,6 +96,27 @@ func (s *pivSigner) Enrol(_ bool) (string, error) {
 	return base64.StdEncoding.EncodeToString(spki), nil
 }
 
+// PublicKeyDER returns the enrolled public key as base64-encoded SPKI DER
+// without generating a new key. Returns an error when no key is enrolled in
+// slot 9c.
+func (s *pivSigner) PublicKeyDER() (string, error) {
+	yk, err := openFirstYubiKey()
+	if err != nil {
+		return "", err
+	}
+	defer yk.Close()
+
+	pub := pivPublicKey(yk)
+	if pub == nil {
+		return "", fmt.Errorf("PIV: no key in slot 9c; run 'signet enrol' first")
+	}
+	spki, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return "", fmt.Errorf("PIV: marshal SPKI: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(spki), nil
+}
+
 func (s *pivSigner) Sign(message string) (string, error) {
 	yk, err := openFirstYubiKey()
 	if err != nil {

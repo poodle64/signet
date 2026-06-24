@@ -121,6 +121,20 @@ func (e *enclaveSigner) Enrol(userPresence bool) (string, error) {
 	return marshalSPKI(x963)
 }
 
+// PublicKeyDER returns the enrolled public key as base64-encoded SPKI DER
+// without generating a new key. Returns an error when no key is enrolled.
+func (e *enclaveSigner) PublicKeyDER() (string, error) {
+	blob, err := os.ReadFile(e.blobPath)
+	if err != nil {
+		return "", fmt.Errorf("Secure Enclave: no enrolled key at %s; run 'signet enrol' first", e.blobPath)
+	}
+	x963, err := sePublicKey(blob)
+	if err != nil {
+		return "", fmt.Errorf("Secure Enclave: read public key from %s: %w", e.blobPath, err)
+	}
+	return marshalSPKI(x963)
+}
+
 func (e *enclaveSigner) Sign(message string) (string, error) {
 	blob, err := os.ReadFile(e.blobPath)
 	if err != nil {

@@ -22,6 +22,10 @@ func (enclaveUnavailable) Enrol(userPresence bool) (string, error) {
 	return "", fmt.Errorf("the secure-enclave backend is only available on macOS; use tpm or piv")
 }
 
+func (enclaveUnavailable) PublicKeyDER() (string, error) {
+	return "", fmt.Errorf("the secure-enclave backend is only available on macOS; use tpm or piv")
+}
+
 func (enclaveUnavailable) Sign(message string) (string, error) {
 	return "", fmt.Errorf("the secure-enclave backend is only available on macOS; use tpm or piv")
 }
