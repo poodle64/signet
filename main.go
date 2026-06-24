@@ -23,8 +23,12 @@
 // Environment variables:
 //
 //	SIGNET_BACKEND  secure-enclave | tpm | piv  (auto-detected if unset)
-//	SIGNET_IDENTITY selects which identity (SE key-blob) to sign as, letting
-//	                one Mac hold more than one identity (default: "consumer")
+//	SIGNET_IDENTITY names which local keypair to sign as (the SE key-blob), the
+//	                way an SSH key filename picks one key of several. One name maps
+//	                to one key blob and so one public key, letting one Mac hold more
+//	                than one identity; without it every consumer on a box would share
+//	                one key. The name is local-only and never sent to the broker,
+//	                which identifies a consumer by its public key (default: "consumer")
 package main
 
 import (
