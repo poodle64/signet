@@ -12,12 +12,15 @@
 //   - tpm: TPM 2.0 via github.com/google/go-tpm (pure Go). Auto-selected on
 //     Linux and Windows when a TPM resource manager device is reachable.
 //
-//   - piv: YubiKey PIV slot 9c, cgo against PC/SC. Auto-selected as the
-//     fallback on any platform when no higher-priority backend is available.
+//   - piv: YubiKey PIV, cgo against PC/SC. Auto-selected as the fallback on any
+//     platform when no higher-priority backend is available. The slot is
+//     configurable (SIGNET_PIV_SLOT, default 9c), so one token can root
+//     multiple identities — one per slot.
 //
 // Backend selection:
 //
-//	SIGNET_BACKEND  secure-enclave | tpm | piv (overrides auto-detect)
+//	SIGNET_BACKEND   secure-enclave | tpm | piv (overrides auto-detect)
+//	SIGNET_PIV_SLOT  9a | 9c | 9d | 9e | 82..95 (piv backend only; default 9c)
 package main
 
 import (
@@ -56,7 +59,7 @@ func newSigner() (Signer, error) {
 	case "tpm":
 		return &tpmSigner{}, nil
 	case "piv":
-		return &pivSigner{}, nil
+		return newPivSigner()
 	default:
 		return nil, fmt.Errorf(
 			"unknown SIGNET_BACKEND %q; expected secure-enclave | tpm | piv",

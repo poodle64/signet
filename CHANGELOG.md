@@ -4,6 +4,12 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.6.3] - 2026-06-25
+
+### Added
+
+- PIV (YubiKey) backend: `SIGNET_PIV_SLOT` selects the signing slot per identity — `9a`, `9c`, `9d`, `9e`, or a retired key-management slot `82`–`95`; unset defaults to `9c` (back-compat). Each PIV slot holds an independent keypair and the broker resolves identity by public key, so one YubiKey now roots **multiple distinct identities — one per slot, up to ~24** — instead of only the single slot-9c identity. This is what makes a single token viable for a multi-consumer host: e.g. an admin identity on `9a` enrolled alongside a warming identity on `9c`, each with its own scope. `enrol` provisions the chosen slot's key (default management key) on first use. Validated on a real YubiKey 5: `9c` and `9a` enrol independent, individually-stable keys; the unset default stays `9c`; an invalid slot is rejected. A gated hardware regression test (`TestPIV_HW_MultiSlot_DistinctStableKeys`) guards it.
+
 ## [2026.6.2] - 2026-06-25
 
 ### Fixed

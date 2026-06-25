@@ -1,7 +1,10 @@
 // signer_piv.go: YubiKey PIV backend for signet.
 //
-// Uses github.com/go-piv/piv-go/v2/piv (cgo, requires PC/SC). Operates on
-// slot 9c (Digital Signature, piv.SlotSignature) with an EC P-256 key.
+// Uses github.com/go-piv/piv-go/v2/piv (cgo, requires PC/SC). Operates on a
+// configurable PIV slot (SIGNET_PIV_SLOT; default 9c, Digital Signature) with
+// an EC P-256 key. Selecting a different slot per identity lets ONE YubiKey
+// root MULTIPLE distinct signet identities: the broker resolves each identity
+// by its public key, and one key per slot is one public key is one identity.
 //
 // Enrol: generates a new key if the slot is empty (keyed by GenerateKey with
 // the default management key), or reads the existing public key otherwise.
@@ -17,12 +20,57 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/go-piv/piv-go/v2/piv"
 )
 
-// pivSigner signs with the first detected YubiKey using the PIV application.
-type pivSigner struct{}
+// pivSigner signs with the first detected YubiKey using the PIV application,
+// on the slot selected at construction from SIGNET_PIV_SLOT.
+type pivSigner struct {
+	slot  piv.Slot
+	label string // human label for the slot, used only in error messages
+}
+
+// newPivSigner resolves the PIV slot from SIGNET_PIV_SLOT and returns a signer.
+func newPivSigner() (*pivSigner, error) {
+	slot, label, err := pivSlotFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return &pivSigner{slot: slot, label: label}, nil
+}
+
+// pivSlotFromEnv maps SIGNET_PIV_SLOT to a PIV slot. Empty defaults to 9c
+// (Digital Signature) for backward compatibility. Accepts the four named PIV
+// slots (9a, 9c, 9d, 9e) and the retired key-management slots 82..95 (hex) —
+// giving one YubiKey up to ~24 independently-enrollable slots, hence up to ~24
+// distinct signet identities on a single token (one per slot).
+func pivSlotFromEnv() (piv.Slot, string, error) {
+	raw := strings.TrimSpace(os.Getenv("SIGNET_PIV_SLOT"))
+	switch strings.ToLower(raw) {
+	case "", "9c":
+		return piv.SlotSignature, "9c", nil
+	case "9a":
+		return piv.SlotAuthentication, "9a", nil
+	case "9d":
+		return piv.SlotKeyManagement, "9d", nil
+	case "9e":
+		return piv.SlotCardAuthentication, "9e", nil
+	}
+	// Retired key-management slots 0x82..0x95 (20 extra usable slots).
+	if n, err := strconv.ParseUint(raw, 16, 32); err == nil {
+		if slot, ok := piv.RetiredKeyManagementSlot(uint32(n)); ok {
+			return slot, strings.ToLower(raw), nil
+		}
+	}
+	return piv.Slot{}, "", fmt.Errorf(
+		"invalid SIGNET_PIV_SLOT %q; expected 9a | 9c | 9d | 9e or a retired slot 82..95 (hex)",
+		raw,
+	)
+}
 
 // openFirstYubiKey opens the first YubiKey listed by piv.Cards().
 func openFirstYubiKey() (*piv.YubiKey, error) {
@@ -40,17 +88,17 @@ func openFirstYubiKey() (*piv.YubiKey, error) {
 	return yk, nil
 }
 
-// pivPublicKey returns the existing P-256 public key in slot 9c, or nil if the
-// slot holds no key (or a non-EC key). It reads the KEY itself — via KeyInfo
-// (firmware >= 5.3.0), falling back to the attestation certificate's key — and
-// deliberately does NOT read the slot's stored X.509 certificate object.
-// GenerateKey persists only the keypair and never writes a certificate, so a
-// Certificate() probe always misses a freshly enrolled key: that made Enrol
-// re-generate (clobbering the key) on every call, and Sign/PublicKeyDER report
-// an empty slot. Errors are swallowed so the caller falls through to GenerateKey
-// only when the slot is genuinely empty.
-func pivPublicKey(yk *piv.YubiKey) *ecdsa.PublicKey {
-	if info, err := yk.KeyInfo(piv.SlotSignature); err == nil {
+// pivPublicKey returns the existing P-256 public key in the given slot, or nil
+// if the slot holds no key (or a non-EC key). It reads the KEY itself — via
+// KeyInfo (firmware >= 5.3.0), falling back to the attestation certificate's
+// key — and deliberately does NOT read the slot's stored X.509 certificate
+// object. GenerateKey persists only the keypair and never writes a certificate,
+// so a Certificate() probe always misses a freshly enrolled key: that made
+// Enrol re-generate (clobbering the key) on every call, and Sign/PublicKeyDER
+// report an empty slot. Errors are swallowed so the caller falls through to
+// GenerateKey only when the slot is genuinely empty.
+func pivPublicKey(yk *piv.YubiKey, slot piv.Slot) *ecdsa.PublicKey {
+	if info, err := yk.KeyInfo(slot); err == nil {
 		if pub, ok := info.PublicKey.(*ecdsa.PublicKey); ok {
 			return pub
 		}
@@ -58,7 +106,7 @@ func pivPublicKey(yk *piv.YubiKey) *ecdsa.PublicKey {
 	// Fallback for firmware < 5.3.0 (no KeyInfo): the attestation certificate
 	// carries the slot's public key. Both paths read the live key, never a
 	// stored certificate, so a present key is always rediscovered.
-	if cert, err := yk.Attest(piv.SlotSignature); err == nil && cert != nil {
+	if cert, err := yk.Attest(slot); err == nil && cert != nil {
 		if pub, ok := cert.PublicKey.(*ecdsa.PublicKey); ok {
 			return pub
 		}
@@ -74,7 +122,7 @@ func (s *pivSigner) Enrol(_ bool) (string, error) {
 	defer yk.Close()
 
 	// Try to read an existing key first (idempotent).
-	if existing := pivPublicKey(yk); existing != nil {
+	if existing := pivPublicKey(yk, s.slot); existing != nil {
 		spki, err := x509.MarshalPKIXPublicKey(existing)
 		if err != nil {
 			return "", fmt.Errorf("PIV: marshal existing SPKI: %w", err)
@@ -85,7 +133,7 @@ func (s *pivSigner) Enrol(_ bool) (string, error) {
 	// No existing key — generate one.
 	pub, err := yk.GenerateKey(
 		piv.DefaultManagementKey,
-		piv.SlotSignature,
+		s.slot,
 		piv.Key{
 			Algorithm:   piv.AlgorithmEC256,
 			PINPolicy:   piv.PINPolicyNever,
@@ -93,7 +141,7 @@ func (s *pivSigner) Enrol(_ bool) (string, error) {
 		},
 	)
 	if err != nil {
-		return "", fmt.Errorf("PIV: GenerateKey (slot 9c): %w", err)
+		return "", fmt.Errorf("PIV: GenerateKey (slot %s): %w", s.label, err)
 	}
 
 	ecPub, ok := pub.(*ecdsa.PublicKey)
@@ -109,7 +157,7 @@ func (s *pivSigner) Enrol(_ bool) (string, error) {
 
 // PublicKeyDER returns the enrolled public key as base64-encoded SPKI DER
 // without generating a new key. Returns an error when no key is enrolled in
-// slot 9c.
+// the configured slot.
 func (s *pivSigner) PublicKeyDER() (string, error) {
 	yk, err := openFirstYubiKey()
 	if err != nil {
@@ -117,9 +165,9 @@ func (s *pivSigner) PublicKeyDER() (string, error) {
 	}
 	defer yk.Close()
 
-	pub := pivPublicKey(yk)
+	pub := pivPublicKey(yk, s.slot)
 	if pub == nil {
-		return "", fmt.Errorf("PIV: no key in slot 9c; run 'signet enrol' first")
+		return "", fmt.Errorf("PIV: no key in slot %s; run 'signet enrol' first", s.label)
 	}
 	spki, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
@@ -136,13 +184,13 @@ func (s *pivSigner) Sign(message string) (string, error) {
 	defer yk.Close()
 
 	// Retrieve the existing public key to pass to PrivateKey.
-	pub := pivPublicKey(yk)
+	pub := pivPublicKey(yk, s.slot)
 	if pub == nil {
-		return "", fmt.Errorf("PIV: no key in slot 9c; run 'signet enrol' first")
+		return "", fmt.Errorf("PIV: no key in slot %s; run 'signet enrol' first", s.label)
 	}
 
 	// Obtain the crypto.Signer backed by the YubiKey.
-	priv, err := yk.PrivateKey(piv.SlotSignature, pub, piv.KeyAuth{})
+	priv, err := yk.PrivateKey(s.slot, pub, piv.KeyAuth{})
 	if err != nil {
 		return "", fmt.Errorf("PIV: get private key: %w", err)
 	}

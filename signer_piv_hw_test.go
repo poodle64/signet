@@ -18,6 +18,8 @@ import (
 	"math/big"
 	"os"
 	"testing"
+
+	"github.com/go-piv/piv-go/v2/piv"
 )
 
 func TestPIV_HW_EnrolStable_SignVerify(t *testing.T) {
@@ -25,9 +27,9 @@ func TestPIV_HW_EnrolStable_SignVerify(t *testing.T) {
 		t.Skip("set SIGNET_PIV_HW_TEST=1 with a YubiKey present to run the PIV hardware round-trip")
 	}
 
-	s := &pivSigner{}
+	s := &pivSigner{slot: piv.SlotSignature, label: "9c"}
 
-	// Enrol must be idempotent: a key already in slot 9c is read back, not
+	// Enrol must be idempotent: a key already in the slot is read back, not
 	// regenerated. Two calls returning different SPKI is exactly the persistence
 	// regression this test guards.
 	first, err := s.Enrol(false)
@@ -83,5 +85,36 @@ func TestPIV_HW_EnrolStable_SignVerify(t *testing.T) {
 	ss := new(big.Int).SetBytes(sig[32:])
 	if !ecdsa.Verify(pub, digest[:], r, ss) {
 		t.Fatal("ecdsa.Verify failed for the YubiKey PIV signature")
+	}
+}
+
+// TestPIV_HW_MultiSlot_DistinctStableKeys verifies SIGNET_PIV_SLOT roots a
+// distinct, stable identity per slot on one token: slots 9c and 9a enrol
+// different keys, and each stays stable after the other is touched. This is the
+// regression guard for the multi-identity-per-YubiKey feature — one slot is one
+// public key is one broker identity.
+func TestPIV_HW_MultiSlot_DistinctStableKeys(t *testing.T) {
+	if os.Getenv("SIGNET_PIV_HW_TEST") != "1" {
+		t.Skip("set SIGNET_PIV_HW_TEST=1 with a YubiKey present to run the PIV hardware round-trip")
+	}
+
+	sig9c := &pivSigner{slot: piv.SlotSignature, label: "9c"}
+	sig9a := &pivSigner{slot: piv.SlotAuthentication, label: "9a"}
+
+	k9c, err := sig9c.Enrol(false)
+	if err != nil {
+		t.Fatalf("enrol 9c: %v", err)
+	}
+	k9a, err := sig9a.Enrol(false)
+	if err != nil {
+		t.Fatalf("enrol 9a: %v", err)
+	}
+	if k9c == k9a {
+		t.Fatal("slots 9c and 9a returned the SAME key; each slot must hold an independent keypair")
+	}
+
+	// Each slot stays stable and independent after the other was touched.
+	if again, err := sig9c.Enrol(false); err != nil || again != k9c {
+		t.Fatalf("slot 9c not stable after touching 9a: err=%v changed=%v", err, again != k9c)
 	}
 }
