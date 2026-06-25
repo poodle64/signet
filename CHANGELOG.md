@@ -4,6 +4,16 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.6.2] - 2026-06-25
+
+### Fixed
+
+- PIV (YubiKey) backend: `enrol` now persists and re-reads its slot-9c key correctly. `pivPublicKey` decided whether a key existed by probing the slot's X.509 **certificate** — which `GenerateKey` never writes — so every `enrol` regenerated a fresh key (a different public key each call) and `sign`/`PublicKeyDER` reported an empty slot. It now reads the key directly via go-piv `KeyInfo` (firmware ≥ 5.3.0), falling back to the attestation certificate's key for older firmware. First end-to-end enrol → attest → sign was validated against a real YubiKey 5; the PIV path had no hardware round-trip test before, only software backend-selection tests, which is why this shipped.
+
+### Added
+
+- Hardware round-trip regression test (`signer_piv_hw_test.go`, gated behind `SIGNET_PIV_HW_TEST=1`): asserts two consecutive `enrol` calls return the same SPKI and that a `sign` output verifies against the enrolled public key.
+
 ## [2026.6.1] - 2026-06-24
 
 ### Changed

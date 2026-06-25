@@ -40,19 +40,30 @@ func openFirstYubiKey() (*piv.YubiKey, error) {
 	return yk, nil
 }
 
-// pivPublicKey returns the existing public key in slot 9c, or nil if the slot
-// holds no key or a non-EC key. Errors from the keychain or certificate
-// parsing are swallowed so the caller can fall through to GenerateKey.
+// pivPublicKey returns the existing P-256 public key in slot 9c, or nil if the
+// slot holds no key (or a non-EC key). It reads the KEY itself — via KeyInfo
+// (firmware >= 5.3.0), falling back to the attestation certificate's key — and
+// deliberately does NOT read the slot's stored X.509 certificate object.
+// GenerateKey persists only the keypair and never writes a certificate, so a
+// Certificate() probe always misses a freshly enrolled key: that made Enrol
+// re-generate (clobbering the key) on every call, and Sign/PublicKeyDER report
+// an empty slot. Errors are swallowed so the caller falls through to GenerateKey
+// only when the slot is genuinely empty.
 func pivPublicKey(yk *piv.YubiKey) *ecdsa.PublicKey {
-	cert, err := yk.Certificate(piv.SlotSignature)
-	if err != nil || cert == nil {
-		return nil
+	if info, err := yk.KeyInfo(piv.SlotSignature); err == nil {
+		if pub, ok := info.PublicKey.(*ecdsa.PublicKey); ok {
+			return pub
+		}
 	}
-	pub, ok := cert.PublicKey.(*ecdsa.PublicKey)
-	if !ok {
-		return nil
+	// Fallback for firmware < 5.3.0 (no KeyInfo): the attestation certificate
+	// carries the slot's public key. Both paths read the live key, never a
+	// stored certificate, so a present key is always rediscovered.
+	if cert, err := yk.Attest(piv.SlotSignature); err == nil && cert != nil {
+		if pub, ok := cert.PublicKey.(*ecdsa.PublicKey); ok {
+			return pub
+		}
 	}
-	return pub
+	return nil
 }
 
 func (s *pivSigner) Enrol(_ bool) (string, error) {
