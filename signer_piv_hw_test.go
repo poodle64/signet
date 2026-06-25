@@ -88,7 +88,7 @@ func TestPIV_HW_EnrolStable_SignVerify(t *testing.T) {
 	}
 }
 
-// TestPIV_HW_MultiSlot_DistinctStableKeys verifies SIGNET_PIV_SLOT roots a
+// TestPIV_HW_MultiSlot_DistinctStableKeys verifies --slot roots a
 // distinct, stable identity per slot on one token: slots 9c and 9a enrol
 // different keys, and each stays stable after the other is touched. This is the
 // regression guard for the multi-identity-per-YubiKey feature — one slot is one

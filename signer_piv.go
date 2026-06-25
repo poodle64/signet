@@ -1,7 +1,7 @@
 // signer_piv.go: YubiKey PIV backend for signet.
 //
 // Uses github.com/go-piv/piv-go/v2/piv (cgo, requires PC/SC). Operates on a
-// configurable PIV slot (SIGNET_PIV_SLOT; default 9c, Digital Signature) with
+// configurable PIV slot (--slot; default 9c, Digital Signature) with
 // an EC P-256 key. Selecting a different slot per identity lets ONE YubiKey
 // root MULTIPLE distinct signet identities: the broker resolves each identity
 // by its public key, and one key per slot is one public key is one identity.
@@ -20,7 +20,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -28,28 +27,28 @@ import (
 )
 
 // pivSigner signs with the first detected YubiKey using the PIV application,
-// on the slot selected at construction from SIGNET_PIV_SLOT.
+// on the slot selected at construction from the --slot flag.
 type pivSigner struct {
 	slot  piv.Slot
 	label string // human label for the slot, used only in error messages
 }
 
-// newPivSigner resolves the PIV slot from SIGNET_PIV_SLOT and returns a signer.
-func newPivSigner() (*pivSigner, error) {
-	slot, label, err := pivSlotFromEnv()
+// newPivSigner resolves the PIV slot name and returns a signer.
+func newPivSigner(slot string) (*pivSigner, error) {
+	s, label, err := pivSlot(slot)
 	if err != nil {
 		return nil, err
 	}
-	return &pivSigner{slot: slot, label: label}, nil
+	return &pivSigner{slot: s, label: label}, nil
 }
 
-// pivSlotFromEnv maps SIGNET_PIV_SLOT to a PIV slot. Empty defaults to 9c
-// (Digital Signature) for backward compatibility. Accepts the four named PIV
-// slots (9a, 9c, 9d, 9e) and the retired key-management slots 82..95 (hex) —
-// giving one YubiKey up to ~24 independently-enrollable slots, hence up to ~24
-// distinct signet identities on a single token (one per slot).
-func pivSlotFromEnv() (piv.Slot, string, error) {
-	raw := strings.TrimSpace(os.Getenv("SIGNET_PIV_SLOT"))
+// pivSlot maps a slot name to a PIV slot. Empty defaults to 9c (Digital
+// Signature). Accepts the four named PIV slots (9a, 9c, 9d, 9e) and the retired
+// key-management slots 82..95 (hex) — giving one YubiKey up to ~24
+// independently-enrollable slots, hence up to ~24 distinct signet identities on
+// a single token (one per slot).
+func pivSlot(slot string) (piv.Slot, string, error) {
+	raw := strings.TrimSpace(slot)
 	switch strings.ToLower(raw) {
 	case "", "9c":
 		return piv.SlotSignature, "9c", nil
@@ -67,7 +66,7 @@ func pivSlotFromEnv() (piv.Slot, string, error) {
 		}
 	}
 	return piv.Slot{}, "", fmt.Errorf(
-		"invalid SIGNET_PIV_SLOT %q; expected 9a | 9c | 9d | 9e or a retired slot 82..95 (hex)",
+		"invalid PIV slot %q (--slot); expected 9a | 9c | 9d | 9e or a retired slot 82..95 (hex)",
 		raw,
 	)
 }

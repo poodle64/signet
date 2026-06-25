@@ -7,14 +7,14 @@
 // newEnclaveSigner unconditionally, so every target platform must provide the
 // symbol to compile. Off darwin we supply a stub: autoDetectBackend never selects
 // secure-enclave on a non-darwin host (it picks tpm or piv), so this path is
-// reached only when SIGNET_BACKEND is explicitly forced to
-// secure-enclave there — in which case it fails at use with a clear message rather
-// than failing the build for every Linux/Windows consumer.
+// reached only when --backend is explicitly forced to secure-enclave there — in
+// which case it fails at use with a clear message rather than failing the build
+// for every Linux/Windows consumer. The identity argument is ignored.
 package main
 
 import "fmt"
 
-func newEnclaveSigner() Signer { return enclaveUnavailable{} }
+func newEnclaveSigner(_ string) Signer { return enclaveUnavailable{} }
 
 type enclaveUnavailable struct{}
 

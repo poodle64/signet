@@ -54,7 +54,7 @@ import (
 // an operator can keep more than one signet identity on one Mac. The default is
 // "consumer": signet's common case is a credential consumer attesting for a
 // vend, so an unconfigured caller resolves to the consumer identity. An admin or
-// any per-service identity is selected with an explicit SIGNET_IDENTITY.
+// any per-service identity is selected with an explicit --identity.
 const seDefaultTag = "consumer"
 
 // enclaveSigner signs with the macOS Secure Enclave via CryptoKit (cgo). The
@@ -64,8 +64,8 @@ type enclaveSigner struct {
 	blobPath string
 }
 
-func newEnclaveSigner() *enclaveSigner {
-	tag := os.Getenv("SIGNET_IDENTITY")
+func newEnclaveSigner(identity string) *enclaveSigner {
+	tag := identity
 	if tag == "" {
 		tag = seDefaultTag
 	}

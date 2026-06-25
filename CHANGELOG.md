@@ -4,6 +4,12 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.6.4] - 2026-06-25
+
+### Changed
+
+- **The CLI is flag-driven; the `SIGNET_BACKEND`, `SIGNET_PIV_SLOT`, and `SIGNET_IDENTITY` environment variables are removed.** Backend, PIV slot, and Secure-Enclave identity are now selected by `--backend`, `--slot`, and `--identity`, accepted on every subcommand — e.g. `signet auth --backend piv --slot 9a <broker-url>`. **Breaking:** callers that configured signet through the environment must pass the equivalent flags (the embedding `mcp-common` signer passes them per invocation). `--backend` still falls back to platform auto-detect when omitted; `--slot` defaults to `9c`; `--identity` defaults to `consumer`. Explicit per-invocation selection is self-documenting and removes the ambient-environment footgun — a single exported `SIGNET_PIV_SLOT` would have forced every consumer on a host onto one slot, hence one identity.
+
 ## [2026.6.3] - 2026-06-25
 
 ### Added

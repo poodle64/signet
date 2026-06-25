@@ -3,16 +3,14 @@
 package main
 
 import (
-	"fmt"
 	"runtime"
 	"strings"
 	"testing"
 )
 
-// TestNewSigner_BackendOverride_TPM verifies the tpm alias returns a *tpmSigner.
+// TestNewSigner_BackendOverride_TPM verifies the tpm name returns a *tpmSigner.
 func TestNewSigner_BackendOverride_TPM(t *testing.T) {
-	t.Setenv("SIGNET_BACKEND", "tpm")
-	s, err := newSigner()
+	s, err := newSigner("tpm", "", "")
 	if err != nil {
 		t.Fatalf("newSigner(tpm): %v", err)
 	}
@@ -21,10 +19,10 @@ func TestNewSigner_BackendOverride_TPM(t *testing.T) {
 	}
 }
 
-// TestNewSigner_BackendOverride_PIV verifies the piv alias returns a *pivSigner.
+// TestNewSigner_BackendOverride_PIV verifies the piv name returns a *pivSigner
+// (slot construction only; no hardware touched).
 func TestNewSigner_BackendOverride_PIV(t *testing.T) {
-	t.Setenv("SIGNET_BACKEND", "piv")
-	s, err := newSigner()
+	s, err := newSigner("piv", "", "")
 	if err != nil {
 		t.Fatalf("newSigner(piv): %v", err)
 	}
@@ -41,8 +39,7 @@ func TestNewSigner_BackendOverride_SE(t *testing.T) {
 	for _, alias := range []string{"secure-enclave", "enclave", "se"} {
 		alias := alias
 		t.Run(alias, func(t *testing.T) {
-			t.Setenv("SIGNET_BACKEND", alias)
-			s, err := newSigner()
+			s, err := newSigner(alias, "", "")
 			if err != nil {
 				t.Fatalf("newSigner(%q): %v", alias, err)
 			}
@@ -54,19 +51,13 @@ func TestNewSigner_BackendOverride_SE(t *testing.T) {
 }
 
 // TestNewSigner_UnknownBackend verifies an unknown backend returns an error that
-// names the unknown value and the valid options.
+// names the unknown value and the valid options. An empty backend is not tested
+// here: it triggers auto-detect, not an error.
 func TestNewSigner_UnknownBackend(t *testing.T) {
-	cases := []string{"unknown-backend", "INVALID", "tpm2", ""}
-
-	for _, tc := range cases {
+	for _, tc := range []string{"unknown-backend", "INVALID", "tpm2"} {
 		tc := tc
-		t.Run(fmt.Sprintf("env=%q", tc), func(t *testing.T) {
-			// Only test explicitly-unknown values; empty string triggers auto-detect.
-			if tc == "" {
-				t.Skip("empty string triggers auto-detect, not an error path")
-			}
-			t.Setenv("SIGNET_BACKEND", tc)
-			_, err := newSigner()
+		t.Run(tc, func(t *testing.T) {
+			_, err := newSigner(tc, "", "")
 			if err == nil {
 				t.Fatalf("newSigner(%q): expected error, got nil", tc)
 			}

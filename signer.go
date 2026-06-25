@@ -1,6 +1,6 @@
 // signer.go: backend selector and Signer interface.
 //
-// Three backends are compiled in; selection is at runtime (SIGNET_BACKEND
+// Three backends are compiled in; selection is at runtime (--backend
 // or autoDetectBackend). Only the Secure Enclave backend is behind a darwin build
 // tag (it links a Swift shim via cgo); TPM and PIV compile on every platform.
 //
@@ -14,18 +14,15 @@
 //
 //   - piv: YubiKey PIV, cgo against PC/SC. Auto-selected as the fallback on any
 //     platform when no higher-priority backend is available. The slot is
-//     configurable (SIGNET_PIV_SLOT, default 9c), so one token can root
-//     multiple identities — one per slot.
+//     selectable (--slot, default 9c), so one token can root multiple
+//     identities — one per slot.
 //
-// Backend selection:
-//
-//	SIGNET_BACKEND   secure-enclave | tpm | piv (overrides auto-detect)
-//	SIGNET_PIV_SLOT  9a | 9c | 9d | 9e | 82..95 (piv backend only; default 9c)
+// Backend, slot, and identity are selected by the --backend / --slot /
+// --identity flags (see main.go); --backend overrides auto-detect.
 package main
 
 import (
 	"fmt"
-	"os"
 	"runtime"
 )
 
@@ -45,26 +42,23 @@ type Signer interface {
 	Sign(message string) (string, error)
 }
 
-// newSigner selects a backend. SIGNET_BACKEND overrides auto-detect.
+// newSigner selects a backend from an explicit name (empty → auto-detect).
 // Auto-detect order: darwin → secure-enclave; linux/windows → tpm (if device
-// reachable) then piv; other → piv.
-func newSigner() (Signer, error) {
-	backend := os.Getenv("SIGNET_BACKEND")
+// reachable) then piv; other → piv. slot applies to the piv backend, identity
+// to secure-enclave; each is ignored by the other backends.
+func newSigner(backend, slot, identity string) (Signer, error) {
 	if backend == "" {
 		backend = autoDetectBackend()
 	}
 	switch backend {
 	case "secure-enclave", "enclave", "se":
-		return newEnclaveSigner(), nil
+		return newEnclaveSigner(identity), nil
 	case "tpm":
 		return &tpmSigner{}, nil
 	case "piv":
-		return newPivSigner()
+		return newPivSigner(slot)
 	default:
-		return nil, fmt.Errorf(
-			"unknown SIGNET_BACKEND %q; expected secure-enclave | tpm | piv",
-			backend,
-		)
+		return nil, fmt.Errorf("unknown backend %q; expected secure-enclave | tpm | piv", backend)
 	}
 }
 
