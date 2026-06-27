@@ -55,10 +55,10 @@ func sanitiseHost(brokerURL string) string {
 }
 
 // publicKeyFingerprint returns the first 16 hex characters of the SHA-256
-// digest of the raw DER bytes encoded in spkiB64. This matches the broker's
-// _public_key_fingerprint() (src/portcullis/auth/hardware_identity.py).
-// The fingerprint is used as the bearer-cache discriminator, replacing the
-// legacy identity_id — one fingerprint per enrolled key, independent of any
+// digest of the raw DER bytes encoded in spkiB64. This is the protocol-level
+// fingerprint: 16 hex chars of SHA-256(SPKI DER), used by the /v1/attest
+// protocol to discriminate bearer caches per enrolled key without sending the
+// key identity by name. One fingerprint per enrolled key, independent of any
 // broker-side identity name.
 func publicKeyFingerprint(spkiB64 string) (string, error) {
 	der, err := base64.StdEncoding.DecodeString(spkiB64)

@@ -1,6 +1,6 @@
 ---
 paths:
-  - "**/*"
+  - '**/*'
 ---
 
 # signet Project Foundations
@@ -16,7 +16,7 @@ signet is a hardware-rooted signing CLI: one self-contained, cross-platform Go b
 - Generates and holds a non-exportable P-256 key in secure hardware and prints its public half (SPKI DER, base64) for one-time enrolment with the broker (`enrol`)
 - Signs an arbitrary message in hardware (SHA-256 / ECDSA P-256, IEEE P1363 `r||s`) for testing or bespoke flows (`sign`)
 - Runs the credential-helper attestation flow (`auth`): request a challenge, sign it in hardware, exchange the signature for a short-lived bearer, cache it (keyed by broker URL **and** identity), renew as it ages, and emit an `{"Authorization":"Bearer …"}` header on stdout
-- Compiles in three backends and selects one at runtime: Secure Enclave (macOS), TPM 2.0 (Linux/Windows), YubiKey/PIV (cross-platform); selected by `SIGNET_BACKEND` or OS/hardware auto-detection
+- Compiles in three backends and selects one at runtime: Secure Enclave (macOS), TPM 2.0 (Linux/Windows), YubiKey/PIV (cross-platform); selected by `--backend` flag or OS/hardware auto-detection
 - Ships per-platform release binaries installable via a Homebrew tap and a nix (`fetchurl` + SRI) derivation
 
 ### What This Project Does NOT Do
@@ -64,7 +64,7 @@ The CLI and the attestation client are written against the small `Signer` interf
 
 signet is designed around a **non-exportable key sealed in hardware**: there is nothing on disk, in an env var, or in a config file for a stolen laptop image or a leaked `.env` to give away.
 
-- **One binary, three backends**: switching secure hardware is a one-line `SIGNET_BACKEND` change, not a migration; the identity model and broker contract are identical across all three substrates.
+- **One binary, three backends**: switching secure hardware is a one-flag `--backend` change, not a migration; the identity model and broker contract are identical across all three substrates.
 - **A thin, honest client, not a framework**: the protocol half (challenge → sign → token → renew) is deliberately small and specific to one broker's contract; that is exactly what a credential helper is. SPIRE, mTLS meshes, and full PKI are heavier answers to a problem a single broker does not have.
 - **Nothing exportable, nothing persistent**: the signing key never leaves the hardware; the only persisted state is a short-lived bearer cache and the Enclave's machine-bound key blob, useless if copied off the machine.
 

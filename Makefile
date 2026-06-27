@@ -15,6 +15,9 @@ SWIFT_SRC := se_swift.swift
 SWIFT_OBJ := se_swift.o
 SWIFT_LIB := libsignet_se.a
 
+VERSION := $(shell git describe --tags --always 2>/dev/null || echo dev)
+LDFLAGS := -ldflags "-X main.version=$(VERSION)"
+
 UNAME_S := $(shell uname -s)
 
 .PHONY: build test clean
@@ -22,7 +25,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 
 build: $(SWIFT_LIB)
-	CGO_ENABLED=1 $(GO) build -o $(BINARY) .
+	CGO_ENABLED=1 $(GO) build $(LDFLAGS) -o $(BINARY) .
 
 test: $(SWIFT_LIB)
 	CGO_ENABLED=1 $(GO) test ./...
@@ -34,7 +37,7 @@ $(SWIFT_LIB): $(SWIFT_SRC)
 else
 
 build:
-	CGO_ENABLED=1 $(GO) build -o $(BINARY) .
+	CGO_ENABLED=1 $(GO) build $(LDFLAGS) -o $(BINARY) .
 
 test:
 	CGO_ENABLED=1 $(GO) test ./...

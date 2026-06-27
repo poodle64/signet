@@ -1,37 +1,43 @@
 # Configuration
 
-signet reads exactly two environment variables. Everything else (the broker URL, the identity) is a command argument; see [usage.md](usage.md). For the hardware backends themselves see [backends.md](backends.md).
+signet is configured with per-subcommand flags. There are no mandatory environment variables; the only ambient configuration is an optional identity name for the Secure Enclave backend. For the hardware backends themselves see [backends.md](backends.md); for the commands see [usage.md](usage.md).
 
-## Environment variables
+## Flags (accepted on every subcommand)
 
-### SIGNET_BACKEND
+### --backend
 
-Selects which hardware backend to use.
+Selects the hardware backend.
 
-- **Accepted values:** `secure-enclave` (aliases `enclave`, `se`), `tpm`, `piv`.
-- **Default:** unset, which triggers auto-detection (see [Backend selection](#backend-selection)).
-- **Honoured by:** all platforms. It overrides auto-detection; an unknown value is an error rather than a silent fallback.
+- **Values:** `secure-enclave` (aliases `enclave`, `se`), `tpm`, `piv`.
+- **Default:** omitted, which triggers auto-detection (see [Backend selection](#backend-selection)).
+- **Effect:** overrides auto-detection; an unrecognised value is an error rather than a silent fallback.
 
-### SIGNET_IDENTITY
+Switching hardware is a one-flag change: `--backend secure-enclave`, `--backend tpm`, or `--backend piv` — not a reconfiguration or a migration.
 
-Names which hardware keypair on this machine to sign as. It is the **local name of a keypair**, exactly like the filename you give an SSH key (`~/.ssh/id_ed25519` versus `~/.ssh/id_work`): the name is how you pick one key out of several on the same machine.
+### --slot
 
-This is why the variable has to exist. A single machine can hold more than one consumer (say a browser-driver sidecar and a separate vend client), and each needs its own distinct keypair so the broker can tell them apart — one keypair per identity, one public key per identity. Without a name there would be a single anonymous key slot per machine, every consumer on the box would present the same public key, and the broker could never differentiate them. The name is what lets `enrol`/`sign` find and unwrap the right key blob in the Secure Enclave, and what makes "two consumers on one Mac" possible at all.
+Selects the PIV signing slot. Accepted values: `9a`, `9c`, `9d`, `9e`, or a retired key-management slot `82`–`95`. Defaults to `9c` (Digital Signature slot). Ignored on non-PIV backends. Each slot holds an independent keypair, so one YubiKey can root multiple distinct identities — one per slot, each with its own public key and its own broker enrolment.
 
-The name is **purely local. It never crosses the wire to the broker.** signet sends the broker only the key's public half; the broker identifies a consumer by that public key, not by the name you chose for it locally. Two machines that both use the default `consumer` name still hold two completely different keys (each Enclave generates its own), so they are two different identities to the broker — the name collides, the keys do not. Renaming an identity does not change the key; it just looks in a different file.
+### --identity
 
-- **Accepted values:** any identity name.
-- **Default:** `consumer`. signet's common case is a credential consumer attesting for a vend, so an unconfigured caller resolves to the consumer identity; set an explicit value for an admin or any per-service identity (e.g. `SIGNET_IDENTITY=browser-driver`).
-- **Honoured by:** the Secure Enclave backend only. It names the on-disk key blob (`se-<identity>.key`), so one Mac can hold more than one identity. Characters outside `[a-zA-Z0-9._-]` are normalised to underscores in the filename (the `safeFilename` helper in `signer_darwin.go`), so an identity `my/service` produces `se-my_service.key`. It is not a keychain attribute. The TPM and PIV backends ignore it: their key lives at a fixed location in the hardware, not in a per-identity file, so each of those machines holds exactly one identity.
+Names which hardware keypair to sign as — the **local label of a keypair**, exactly like the filename you give an SSH key. Defaults to `consumer`.
 
-There is no `SIGNET_SE_TAG` or any other variable; these two are the entire configuration surface.
+This is why the flag exists. A single machine can hold more than one consumer (say a browser-driver sidecar and a separate vend client), and each needs its own distinct keypair so the broker can tell them apart. Without a name there would be a single anonymous key slot per machine; with it you can have two consumers on one Mac, each with its own blob and its own enrolled public key.
+
+The name is **purely local. It never crosses the wire to the broker.** signet sends the broker only the key's public half; the broker identifies a consumer by that public key, not by the name chosen locally. Renaming an identity does not change the key; it just looks in a different file.
+
+Honoured by the Secure Enclave backend only. It names the on-disk key blob (`se-<identity>.key`). Characters outside `[a-zA-Z0-9._-]` are normalised to underscores in the filename, so `my/service` produces `se-my_service.key`. The TPM and PIV backends ignore it: their key lives at a fixed location in the hardware (a fixed TPM handle, or a PIV token slot), so each of those machines holds exactly one identity per slot.
+
+### --user-presence
+
+Secure-Enclave-only. Gates each subsequent signature behind Touch ID or the device passcode. Suits an interactive identity; on TPM and PIV this flag has no effect. Accepted only on `enrol`.
 
 ## Backend selection
 
 signet resolves the backend in this order:
 
-1. **`SIGNET_BACKEND` override.** If set, its value wins (`secure-enclave` / `enclave` / `se`, `tpm`, or `piv`). An unrecognised value is rejected.
-2. **Auto-detect** (when `SIGNET_BACKEND` is unset):
+1. **`--backend` flag.** If passed, its value wins (`secure-enclave` / `enclave` / `se`, `tpm`, or `piv`). An unrecognised value is rejected.
+2. **Auto-detect** (when `--backend` is omitted):
    - **macOS** uses the Secure Enclave.
    - **Linux and Windows** use the TPM if a TPM device is reachable, otherwise fall back to PIV.
    - **Anything else** uses PIV.
@@ -44,7 +50,7 @@ All of signet's persistent state lives under a single dotfolder, `~/.signet` (di
 
 | Path | Mode | Backend | What it holds |
 | --- | --- | --- | --- |
-| `~/.signet/se-<identity>.key` | `0600` | Secure Enclave | The Enclave's opaque, hardware-wrapped key blob. `<identity>` is the value of `SIGNET_IDENTITY` (default `consumer`). |
+| `~/.signet/se-<identity>.key` | `0600` | Secure Enclave | The Enclave's opaque, hardware-wrapped key blob. `<identity>` is the value of `--identity` (default `consumer`). |
 | `~/.signet/cache/<url>_<identity>.json` | `0600` | all | A short-lived bearer token. |
 
 The Secure Enclave blob is the Enclave's own machine-bound, hardware-wrapped key material; it is useless if copied to another machine, because only this Mac's Enclave can unwrap it.

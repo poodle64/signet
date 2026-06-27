@@ -1,4 +1,9 @@
-// Command signet: hardware-rooted signing helper for Portcullis attestation.
+// Command signet is a standalone hardware machine-identity CLI.
+//
+// signet generates and manages a non-exportable signing key sealed in the
+// host's secure hardware (Apple Secure Enclave, TPM 2.0, or YubiKey PIV),
+// and speaks the /v1/attest attestation protocol: it signs a broker challenge
+// in hardware and exchanges the proof for a short-lived bearer token.
 //
 // Three backends are compiled in and selected at runtime (automatically, or via
 // --backend). Only the Secure Enclave backend is behind a darwin build tag; TPM
@@ -17,11 +22,13 @@
 //
 // Usage:
 //
-//	signet enrol [flags] [--user-presence]
-//	signet sign  [flags] <message>
-//	signet auth  [flags] <broker-url>
+//	signet enrol   [flags] [--user-presence]
+//	signet sign    [flags] <message>
+//	signet auth    [flags] <broker-url>
+//	signet version
+//	signet doctor  [flags]
 //
-// Flags (all subcommands):
+// Flags (enrol, sign, auth, doctor):
 //
 //	--backend   secure-enclave | tpm | piv   (default: auto-detect for the platform)
 //	--slot      9a | 9c | 9d | 9e | 82..95   (piv backend only; default: 9c)
@@ -38,7 +45,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 )
+
+// version is overwritten at link time by -ldflags "-X main.version=<value>".
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -57,8 +68,9 @@ func signerFlags(fs *flag.FlagSet) (backend, slot, identity *string) {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		return usage()
+	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		printHelp()
+		return nil
 	}
 
 	switch args[0] {
@@ -115,16 +127,49 @@ func run(args []string) error {
 		}
 		return cmdAuth(signer, fs.Arg(0))
 
+	case "version":
+		fmt.Printf("signet %s %s/%s (go %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		return nil
+
+	case "doctor":
+		fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+		// Accept the shared flags so the user can pass --identity etc. without
+		// an "unknown flag" error, even though doctor probes all backends.
+		_, _, _ = signerFlags(fs)
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		return cmdDoctor()
+
 	default:
-		return fmt.Errorf("unknown subcommand %q; expected enrol|sign|auth\n%s", args[0], usageLine())
+		return fmt.Errorf("unknown subcommand %q\n\n%s", args[0], helpText())
 	}
 }
 
-func usageLine() string {
-	return "usage: signet <enrol | sign <message> | auth <broker-url>> " +
-		"[--backend secure-enclave|tpm|piv] [--slot 9a|9c|9d|9e|82..95] [--identity <name>] [--user-presence]"
+// printHelp writes the help block to stdout and exits 0.
+func printHelp() {
+	fmt.Print(helpText())
 }
 
-func usage() error {
-	return fmt.Errorf("%s", usageLine())
+// helpText returns the structured help block listing all subcommands.
+func helpText() string {
+	return `signet — hardware machine-identity CLI
+
+Usage:
+  signet <subcommand> [flags]
+
+Subcommands:
+  enrol    Generate (or recover) the hardware key and print the SPKI public key
+  sign     Sign a message with the hardware key and print the base64 signature
+  auth     Attest to a broker and print the Authorization header (JSON)
+  version  Print the signet version, platform, and Go runtime
+  doctor   Probe each backend and report availability
+
+Flags (enrol, sign, auth, doctor):
+  --backend    secure-enclave | tpm | piv   (default: auto-detect)
+  --slot       9a | 9c | 9d | 9e | 82..95  (piv backend only; default: 9c)
+  --identity   <name>                       (secure-enclave only; default: consumer)
+  --user-presence                           (enrol only; require Touch ID per sign)
+
+`
 }

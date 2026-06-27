@@ -6,32 +6,27 @@
 
 _The key that proves which machine you are; sealed in hardware, exportable to no one._
 
-One self-contained Go binary that holds a non-exportable signing identity in whatever secure hardware a host has, and trades a signed challenge for a short-lived bearer token.
+One self-contained Go binary that gives a machine a hardware-rooted signing identity and trades a signed challenge for a short-lived bearer token — on whichever secure hardware the host has.
 
-[Installation](#installation) · [Features](#features) · [Documentation](#documentation) · [Contributing](#contributing)
+[Installation](#installation) · [Quickstart](#quickstart) · [Backends](#backends) · [Documentation](#documentation) · [Contributing](#contributing)
 
 </div>
 
-## Why Signet?
+## What is signet?
 
-A machine that needs secrets has to prove it is itself before a broker will hand anything over. The robust way to do that is a non-exportable key sealed in hardware: the machine signs a challenge, the broker verifies the signature against a public key it enrolled once, and issues a short-lived credential. No long-lived secret sits on disk, in an env var, or in a config file; there is nothing for a stolen laptop image or a leaked `.env` to give away.
+A machine that needs secrets has to prove it is itself before a broker will hand anything over. The robust way to do that is a non-exportable key sealed in hardware: the machine signs a challenge, the broker verifies the signature against a public key it enrolled once, and issues a short-lived credential. No long-lived secret sits on disk, in an env var, or in a config file.
 
-This is the same pattern as AWS IAM Roles Anywhere, where a hardware-held X.509 key signs a challenge and the workload gets short-lived credentials through a `credential_process` helper. Signet is that idea generalised across the three secure-hardware substrates a real fleet actually has (Apple Secure Enclave, a TPM, a YubiKey/PIV token), and scoped to one broker's vend contract. The signing key never leaves the hardware; the only thing on disk is a short-lived bearer cache and, on macOS, the Enclave's own opaque key blob, useless if copied off the machine.
+signet is a single self-contained Go binary that implements this pattern across the three secure-hardware substrates a real fleet actually has:
 
-It is the machine-identity client for the [Portcullis](https://github.com/poodle64/portcullis) secrets broker, but it carries no broker code: it speaks the Portcullis `/v1/attest` HTTP contract and nothing more. No sidecar, no helper process, no PKCS#11 module to point at; the backends are compiled in and the binary detects the OS and the available hardware.
+- **Apple Secure Enclave** — auto-detected on macOS
+- **TPM 2.0** — auto-detected on Linux and Windows with a reachable TPM device
+- **YubiKey / PIV token** — cross-platform fallback, or explicit with `--backend piv`
 
-## Features
+The backends are compiled in and selected at runtime; switching hardware is a one-flag change, not a migration. The private key never leaves the hardware. The only thing on disk is a short-lived bearer cache and, on macOS, the Enclave's own opaque key blob (useless if copied off the machine).
 
-<table>
-<tr>
-<td width="50%"><strong>One binary, three backends</strong><br>Secure Enclave on Macs, a TPM on Linux servers, a YubiKey/PIV token anywhere; compiled in and selected at runtime, so switching hardware is a one-line env change, not a migration.</td>
-<td width="50%"><strong>A credential helper, not a daemon</strong><br>The same shape as <code>git credential</code>, <code>docker-credential-*</code>, and AWS <code>credential_process</code>: a consumer shells out for a fresh bearer header on demand and holds no standing secret of its own.</td>
-</tr>
-<tr>
-<td width="50%"><strong>Nothing exportable, nothing at rest</strong><br>The P-256 signing key is generated in hardware and never appears in a file, env var, log, or argv. The only persisted state is a short-lived bearer cache.</td>
-<td width="50%"><strong>No software-key fallback, by design</strong><br>A host with no secure hardware fails loudly rather than quietly degrading to a key on disk, so "this identity is hardware-rooted" is never a claim that is sometimes false.</td>
-</tr>
-</table>
+signet acts as a standard credential helper — the same shape as `git credential`, `docker-credential-*`, and AWS `credential_process`. A consumer shells out for a fresh `Authorization` header on demand; signet produces it and exits. No daemon, no socket, no keepalive.
+
+This is the same pattern AWS ships as IAM Roles Anywhere, generalised across the three secure-hardware substrates a heterogeneous fleet actually has.
 
 ## Installation
 
@@ -39,7 +34,7 @@ It is the machine-identity client for the [Portcullis](https://github.com/poodle
 brew install poodle64/tap/signet
 ```
 
-For nix (home-manager / nix-darwin), a `fetchurl` + SRI derivation lives in [`nix/signet.nix`](nix/signet.nix); copy it into your config and add it to `home.packages`.
+For Nix (home-manager / nix-darwin), a `fetchurl` + SRI derivation lives in [`nix/signet.nix`](nix/signet.nix); copy it into your config and add it to `home.packages`.
 
 To install manually, download the per-platform tarball and checksum from the [latest release](https://github.com/poodle64/signet/releases/latest), verify, and put the binary on your `PATH`:
 
@@ -49,35 +44,94 @@ tar -xzf signet-*-*.tar.gz
 install -m755 signet ~/.local/bin/signet
 ```
 
-Print the signing key's public half to enrol it with the broker:
+## Quickstart
 
 ```sh
+# Print the hardware key's public half and enrol it with the broker (once per machine)
 signet enrol
+
+# Check hardware is detected and working
+signet doctor
+
+# Attest to a broker and get a bearer header
+signet auth https://your-broker.example.internal
+
+# Print version
+signet version
 ```
 
-See the [Usage guide](docs/usage.md) for the `sign` and `auth` commands and for wiring signet as a credential helper.
+After `enrol`, paste the printed public key into the broker. From then on `auth` is the only call a consumer makes; signet handles caching, renewal, and re-attestation automatically.
+
+## Backends
+
+signet auto-detects the available hardware. Pass `--backend` to override.
+
+| Backend | Platform | Auto-detected? | `--backend` value |
+| --- | --- | --- | --- |
+| Apple Secure Enclave | macOS | Yes | `secure-enclave` (alias `se`) |
+| TPM 2.0 | Linux, Windows | Yes (if `/dev/tpmrm0` or TBS is reachable) | `tpm` |
+| YubiKey / PIV token | macOS, Linux, Windows | Fallback on Linux/Windows | `piv` |
+
+There is no software-key fallback. A host with no secure hardware fails loudly; signet never silently degrades to a key on disk.
+
+See [Hardware backends](docs/backends.md) for the security model, library details, and build-tag notes.
+
+## Features
+
+<table>
+<tr>
+<td width="50%"><strong>One binary, three backends</strong><br>Secure Enclave on Macs, a TPM on Linux servers, a YubiKey/PIV token anywhere; compiled in and selected at runtime, so switching hardware is a one-flag change, not a migration.</td>
+<td width="50%"><strong>A credential helper, not a daemon</strong><br>The same shape as <code>git credential</code>, <code>docker-credential-*</code>, and AWS <code>credential_process</code>: a consumer shells out for a fresh bearer header on demand and holds no standing secret of its own.</td>
+</tr>
+<tr>
+<td width="50%"><strong>Nothing exportable, nothing at rest</strong><br>The P-256 signing key is generated in hardware and never appears in a file, env var, log, or argv. The only persisted state is a short-lived bearer cache.</td>
+<td width="50%"><strong>No software-key fallback, by design</strong><br>A host with no secure hardware fails loudly rather than quietly degrading to a key on disk, so "this identity is hardware-rooted" is never a claim that is sometimes false.</td>
+</tr>
+</table>
+
+## Wiring as a credential helper
+
+Wire `signet auth` as the `headersHelper` in a Claude Code MCP config, or as any other `credential_process`-style helper. Backend selection is a flag:
+
+```json
+{
+  "mcpServers": {
+    "my-broker": {
+      "type": "http",
+      "url": "https://your-broker.example.internal/mcp",
+      "headersHelper": "signet auth https://your-broker.example.internal"
+    }
+  }
+}
+```
+
+To use a specific backend: `signet auth --backend piv https://your-broker.example.internal`
+
+The [Portcullis](https://github.com/poodle64/portcullis) secrets broker is one example consumer of this attestation protocol; signet speaks the `/v1/attest` HTTP contract and is not coupled to any specific broker's business logic.
 
 ## Documentation
 
 | Guide | What it covers |
-| ----- | -------------- |
-| [Usage](docs/usage.md) | The enrol, sign, and auth commands, and wiring signet as a credential helper |
-| [Configuration](docs/configuration.md) | Environment variables, backend selection, and on-disk paths |
+| --- | --- |
+| [Usage](docs/usage.md) | The enrol, sign, auth, doctor, and version commands; wiring as a credential helper |
+| [Configuration](docs/configuration.md) | Flags (--backend, --slot, --identity), backend selection, and on-disk paths |
 | [Hardware backends](docs/backends.md) | The Secure Enclave, TPM, and PIV backends in depth |
 | [Building from source](docs/development/building.md) | The cgo build, the Swift shim, and the release toolchain |
+| [Contributing](CONTRIBUTING.md) | Build prerequisites, per-platform constraints, test commands |
+| [Security](SECURITY.md) | Reporting vulnerabilities and supported versions |
 
 ## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build prerequisites and the per-platform native-build constraint.
 
 ```sh
 make build       # builds ./signet
 make test        # runs the test suite
 ```
 
-cgo is required, which means per-platform native builds: the Secure Enclave and PIV backends link C (the Enclave via a Swift shim compiled by `make build`), so they cannot be cross-compiled; TPM is pure Go. Full details of the build, the Swift shim, and the release toolchain are in the [Building from source guide](docs/development/building.md).
-
 <div align="center">
 <sub>
 The key that proves which machine you are; sealed in hardware, exportable to no one.<br>
-<a href="LICENSE">MIT Licence</a> · <a href="https://github.com/poodle64/signet/issues">Report Bug</a>
+<a href="LICENSE">MIT Licence</a> · <a href="https://github.com/poodle64/signet/issues">Report Bug</a> · <a href="SECURITY.md">Security</a>
 </sub>
 </div>

@@ -1,6 +1,6 @@
 # Hardware backends
 
-signet compiles in three backends and selects one at runtime: Apple Secure Enclave, a TPM 2.0, or a YubiKey/PIV token. The CLI and the attestation client are written against a small `Signer` interface (its two methods are `Enrol` and `Sign`) and never against a specific backend, so the identity model and the broker contract are identical across all three substrates. Switching hardware is a one-line `SIGNET_BACKEND` change, not a migration.
+signet compiles in three backends and selects one at runtime: Apple Secure Enclave, a TPM 2.0, or a YubiKey/PIV token. The CLI and the attestation client are written against a small `Signer` interface (its two methods are `Enrol` and `Sign`) and never against a specific backend, so the identity model and the broker contract are identical across all three substrates. Switching hardware is a one-flag change: `--backend secure-enclave`, `--backend tpm`, or `--backend piv`.
 
 For how a backend is chosen and the on-disk paths each writes, see [configuration.md](configuration.md); for the commands themselves see [usage.md](usage.md).
 
@@ -16,7 +16,7 @@ Only the Secure Enclave backend sits behind a build tag, because it links a macO
 
 ## Secure Enclave (macOS)
 
-The Secure Enclave backend uses CryptoKit's self-stored-key-blob model (the same approach as [`age-plugin-se`](https://github.com/remko/age-plugin-se)). `signet enrol` asks CryptoKit to create a P-256 key inside the Secure Enclave; the Enclave returns an opaque, hardware-wrapped key blob, which signet stores in a file (`~/.signet/se-<identity>.key`, mode `0600`). The `<identity>` is the value of `SIGNET_IDENTITY` (default `consumer`), so one Mac can hold more than one identity: the name is the local label of the keypair (the SSH-keyfile model), and each name maps to its own blob and so its own public key — which is what keeps two consumers on one Mac distinct to the broker. The name is local-only and never sent to the broker; see [configuration.md](configuration.md#signet_identity).
+The Secure Enclave backend uses CryptoKit's self-stored-key-blob model (the same approach as [`age-plugin-se`](https://github.com/remko/age-plugin-se)). `signet enrol` asks CryptoKit to create a P-256 key inside the Secure Enclave; the Enclave returns an opaque, hardware-wrapped key blob, which signet stores in a file (`~/.signet/se-<identity>.key`, mode `0600`). The `<identity>` is the value of `--identity` (default `consumer`), so one Mac can hold more than one identity: the name is the local label of the keypair (the SSH-keyfile model), and each name maps to its own blob and so its own public key — which is what keeps two consumers on one Mac distinct to the broker. The name is local-only and never sent to the broker; see [configuration.md](configuration.md#--identity).
 
 The keychain is never touched. Because the keychain is bypassed, **no `com.apple.application-identifier` entitlement and no code signature are needed**. The old keychain path required that entitlement and failed on unsigned binaries with `-34018 errSecMissingEntitlement`; the blob path avoids it entirely. Notarisation is irrelevant; it is a Gatekeeper distribution gate, not a runtime Secure-Enclave gate. The blob is bound to this Mac's Enclave and is useless if copied to another machine.
 
@@ -30,13 +30,13 @@ This is the auto-detected backend on Linux and Windows whenever a TPM device is 
 
 ## YubiKey / PIV (cross-platform)
 
-The PIV backend talks to a YubiKey (or any PIV token) over PC/SC via `go-piv`, so it links C (cgo) and works on macOS, Linux, and Windows alike. The signing key is an EC P-256 key in slot 9c (Digital Signature); it lives on the token, and nothing is written to disk. `signet enrol` reads an existing slot-9c key if one is present (for example a `ykman`-provisioned key) rather than overwriting it.
+The PIV backend talks to a YubiKey (or any PIV token) over PC/SC via `go-piv`, so it links C (cgo) and works on macOS, Linux, and Windows alike. The signing key is an EC P-256 key in the selected slot (default `9c`, the Digital Signature slot; override with `--slot`); it lives on the token, and nothing is written to disk. `signet enrol` reads an existing key in the chosen slot if one is present (for example a `ykman`-provisioned key) rather than overwriting it. Each PIV slot holds an independent keypair, so one YubiKey can root multiple distinct identities.
 
 The key is configured `PINPolicyNever` / `TouchPolicyNever`, so signing requires no PIN entry and no touch. That makes it suitable for an unattended consumer, but it means there is no per-signature presence gate on the PIV backend; physical custody of the token is the control. (The Secure Enclave backend is the one that offers an optional presence gate, via `enrol --user-presence`.)
 
 ## No software fallback
 
-There is no software-key fallback, by design. A host with no secure hardware genuinely cannot produce a hardware-rooted identity, so signet fails loudly rather than quietly degrading to a key on disk. The whole point of the tool is that "this identity is hardware-rooted" is never a claim that is sometimes false; a silent software fallback would reintroduce exactly the at-rest secret the tool exists to eliminate. If auto-detection finds no usable hardware, the answer is to add hardware (a TPM, a YubiKey) or pick a backend explicitly with `SIGNET_BACKEND`, not to fall back.
+There is no software-key fallback, by design. A host with no secure hardware genuinely cannot produce a hardware-rooted identity, so signet fails loudly rather than quietly degrading to a key on disk. The whole point of the tool is that "this identity is hardware-rooted" is never a claim that is sometimes false; a silent software fallback would reintroduce exactly the at-rest secret the tool exists to eliminate. If auto-detection finds no usable hardware, the answer is to add hardware (a TPM, a YubiKey) or pick a backend explicitly with `--backend`, not to fall back.
 
 ## Security model
 

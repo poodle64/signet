@@ -5,7 +5,7 @@ paths:
 
 # Signet Attest Boundary
 
-signet is the machine-identity client of exactly one broker's attestation contract. This file is a per-repo amendment of the household master rule `rules-library/ai/sidekick-tooling.md`: it carries the **attestation-client corollary** of that rule's broker-black-box invariant. The broker (Portcullis) carries the verification side in `repos/portcullis/.claude/rules/15-broker-boundary.md`. The line both sides defend is the same one: signet proves possession of a hardware key, and every authorisation decision stays on the broker.
+signet is the machine-identity client of exactly one broker's attestation contract. This file is a per-repo amendment of the household master rule `rules-library/ai/sidekick-tooling.md`: it carries the **attestation-client corollary** of that rule's broker-black-box invariant. The broker (Portcullis) carries the verification side in its own rule at `https://github.com/poodle64/portcullis/blob/main/.claude/rules/15-broker-boundary.md`. The line both sides defend is the same one: signet proves possession of a hardware key, and every authorisation decision stays on the broker.
 
 - Must follow `rules-library/core/00-rules-approach.md` §"Changing a rule or strategy" for shared-governance edits: as the attestation-client SME you may make a targeted, well-reasoned change to a shared sidekick-tooling invariant directly (recording why in the commit); raise an issue on `poodle64/master-project` for sweeping, cross-domain, or contentious changes. Must NOT weaken an invariant the broker side depends on without flagging it.
 
@@ -34,12 +34,12 @@ The string signet signs is `"{challenge_id}.{nonce}"`, built by `canonicalMessag
 - Must keep `canonicalMessage` exactly aligned with the broker's canonical form; a change on either side is a coordinated, cross-repo change, never a unilateral edit here.
 - Must sign the canonical message through the backend-agnostic `Signer` interface (`attest.go:213`), never against a specific backend, so the contract holds identically across Secure Enclave, TPM, and PIV.
 
-## 5. SIGNET_* naming only: no broker-brand coupling
+## 5. `signet` naming only: no broker-brand coupling
 
-signet reads exactly two environment variables, `SIGNET_BACKEND` and `SIGNET_IDENTITY` (`signer.go:44`, `signer_darwin.go:68`); its data directory is `~/.signet` (`attest.go:58-64`). The former `PORTCULLIS_*` prefix was deliberately removed, because the identity is bound to the hardware, not to its filename or to the broker it happens to attest against. Coupling signet's configuration namespace to the broker's brand would falsely imply one signet talks to one named broker; it does not.
+signet's per-subcommand flags (`--backend`, `--slot`, `--identity`), its Secure Enclave key-blob filenames, and its data directory (`~/.signet`, `attest.go:58-64`) all carry the tool's own name. Configuration was originally `PORTCULLIS_*`-prefixed env vars, then `SIGNET_*` env vars, and is now per-subcommand flags — removing the ambient-environment footgun and making each invocation self-documenting. The data directory and blob filenames have always been `~/.signet/`; that has not changed. The former env-var form was retired in 2026.6.4.
 
-- Must NOT reintroduce a `PORTCULLIS_*` (or any broker-brand) prefix for an env var, cache path, or data path; new configuration carries the `SIGNET_*` / `signet` prefix.
-- Must NOT add a third environment variable without a real need; the surface is deliberately two variables.
+- Must NOT reintroduce a `PORTCULLIS_*` (or any broker-brand) prefix for a flag, env var, cache path, or data path; new configuration uses the `signet` / `--` prefix.
+- Must NOT add a new ambient environment variable; configuration belongs in per-subcommand flags so each invocation is self-contained.
 
 ## 6. The credential-helper contract: emit one header and exit
 
@@ -55,7 +55,7 @@ signet `auth` is a credential helper of the same shape as `git credential`, `doc
 - Must make ZERO authorisation decisions; signet proves possession of a hardware key and the broker decides everything else. On a 401 the only response is re-attest.
 - Must keep the canonical signed message `"{challenge_id}.{nonce}"` byte-for-byte aligned with the broker; treat any change as coordinated and cross-repo.
 - Must sign through the `Signer` interface, never against one backend, so the contract is identical across all three substrates.
-- Must use `SIGNET_*` / `signet` configuration naming only; must NOT reintroduce a `PORTCULLIS_*` or other broker-brand prefix.
+- Must use `signet` / `--` flag naming for all configuration; must NOT reintroduce a `PORTCULLIS_*`, `SIGNET_*` env-var, or other broker-brand prefix.
 - Must keep `auth` a single-shot credential helper: emit one `{"Authorization":"Bearer <key>"}` line on stdout and exit; must NOT run a daemon, socket, or keepalive loop. Recovery is re-attest, never a background refresh.
 
 ## See also
@@ -63,4 +63,4 @@ signet `auth` is a credential helper of the same shape as `git credential`, `doc
 - `20-key-custody.md`: the hardware-key custody invariants that back the proof this boundary relies on.
 - `00-project-foundations.md`: project scope, architecture, and non-negotiable constraints.
 - Master rule amended here: `rules-library/ai/sidekick-tooling.md` (the attestation-client corollary of the broker-black-box invariant).
-- Broker-side counterpart: `repos/portcullis/.claude/rules/15-broker-boundary.md`.
+- Broker-side counterpart: `https://github.com/poodle64/portcullis/blob/main/.claude/rules/15-broker-boundary.md`.

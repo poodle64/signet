@@ -32,11 +32,11 @@ name: release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, e.g. 2026.6.0 (no v prefix)"
+        description: 'Release version, e.g. 2026.6.0 (no v prefix)'
         required: true
 
 permissions:
@@ -64,7 +64,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: "1.25"
+          go-version: '1.25'
           cache-dependency-path: go.sum
 
       - name: Install PC/SC build deps (Linux go-piv/cgo backend)
@@ -87,12 +87,12 @@ jobs:
       - name: Build signet (Go/cgo; macOS uses make to compile the Swift shim first)
         id: build_go
         env:
-          CGO_ENABLED: "1"
+          CGO_ENABLED: '1'
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
           go version
-          make build BINARY=signet-bin
+          make build BINARY=signet-bin VERSION="${{ steps.ver.outputs.version }}"
           echo "bin=$PWD/signet-bin" >> "$GITHUB_OUTPUT"
 
       - name: Code-sign signet (macOS only, optional)

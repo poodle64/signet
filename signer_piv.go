@@ -71,9 +71,15 @@ func pivSlot(slot string) (piv.Slot, string, error) {
 	)
 }
 
+// pivCards returns the list of PC/SC smart card reader names visible to the OS.
+// Used by the doctor subcommand and by openFirstYubiKey.
+func pivCards() ([]string, error) {
+	return piv.Cards()
+}
+
 // openFirstYubiKey opens the first YubiKey listed by piv.Cards().
 func openFirstYubiKey() (*piv.YubiKey, error) {
-	cards, err := piv.Cards()
+	cards, err := pivCards()
 	if err != nil {
 		return nil, fmt.Errorf("PIV: list smart cards: %w", err)
 	}

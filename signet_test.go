@@ -46,12 +46,12 @@ func TestSanitiseHost(t *testing.T) {
 	}
 }
 
-// TestUsageLine verifies the usage string contains all three subcommands.
-func TestUsageLine(t *testing.T) {
-	line := usageLine()
-	for _, sub := range []string{"enrol", "sign", "auth"} {
-		if !strings.Contains(line, sub) {
-			t.Errorf("usageLine() does not mention %q: %s", sub, line)
+// TestHelpText verifies the help block mentions all subcommands.
+func TestHelpText(t *testing.T) {
+	text := helpText()
+	for _, sub := range []string{"enrol", "sign", "auth", "version", "doctor"} {
+		if !strings.Contains(text, sub) {
+			t.Errorf("helpText() does not mention %q", sub)
 		}
 	}
 }
