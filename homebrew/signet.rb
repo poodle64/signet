@@ -12,13 +12,13 @@
 class Signet < Formula
   desc "Single Go binary for hardware-rooted machine identity; TPM, PIV, and Secure Enclave all work on the unsigned release binary"
   homepage "https://github.com/poodle64/signet"
-  version "2026.6.0"
+  version "2026.6.5"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/poodle64/signet/releases/download/v#{version}/signet-#{version}-darwin-arm64.tar.gz"
-      sha256 "4d51e17289163e7e19fe8d0969d3f8fd43931297ab88ce7a4ca8db2d686bb642"
+      sha256 "6199e318ae5e7098b0b4992ee162e0f4f2ce5a8f0d0146f641b35e9edc83676b"
     end
 
     on_intel do
@@ -30,7 +30,7 @@ class Signet < Formula
   on_linux do
     on_intel do
       url "https://github.com/poodle64/signet/releases/download/v#{version}/signet-#{version}-linux-amd64.tar.gz"
-      sha256 "8bb5ae2bde4541f702776c23fad3cdcaebb9af2cf80d8b1b5733f64b4d8e2582"
+      sha256 "0e18e743926d09995a7e17c3d0e57e0ef7acccb8879f4bf61d9a84a02549ef95"
     end
 
     on_arm do
