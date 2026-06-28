@@ -4,6 +4,18 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.6.5] - 2026-06-28
+
+### Added
+
+- `version` subcommand — prints the signet version, platform, and Go runtime.
+- `doctor` subcommand — preflight check of the signing environment (backend availability and hardware reachability), with platform-specific probes.
+- `help` subcommand and `-h` / `--help` — usage for every subcommand.
+
+### Changed
+
+- Documentation truthed-up to a finished-product state (README, usage, configuration, and backends guides); added CONTRIBUTING.md and SECURITY.md.
+
 ## [2026.6.4] - 2026-06-25
 
 ### Changed
