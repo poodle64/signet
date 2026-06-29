@@ -4,6 +4,13 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [Unreleased]
+
+### Added
+
+- `agent` subcommand — an own-the-token, sign-on-request daemon for workloads that cannot reach the hardware directly (a container with no pcscd socket / no path to the YubiKey). One process owns the single-access token and serves a Unix socket per `--bind <socket>=<slot>`; each socket is pinned to one slot, so a client can only ever sign with that socket's key (the slot is never taken from a request). Hardware access is serialised across bindings; the agent answers only "return the public key" and "sign", and never generates or overwrites a key. The `ssh-agent` / SPIRE node-agent / HSM-proxy pattern.
+- `--agent <socket>` flag on `sign`, `enrol`, and `auth` — forwards signing and public-key reads to a running agent instead of opening local hardware. Attestation is resolve-by-public-key, so the broker is unaffected by how the signature was produced. (poodle64/signet#3)
+
 ## [2026.6.5] - 2026-06-28
 
 ### Added

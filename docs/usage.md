@@ -24,7 +24,10 @@ For per-subcommand flags, on-disk paths, and backend selection see [configuratio
 signet enrol [--backend <backend>] [--identity <name>] [--user-presence]
 signet sign [--backend <backend>] [--identity <name>] <message>
 signet auth [--backend <backend>] [--identity <name>] <broker-url>
+signet agent --bind <socket>=<slot> [--bind ...] [--backend piv]
 ```
+
+`enrol`, `sign`, and `auth` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
 
 ### enrol
 
@@ -59,6 +62,24 @@ The broker resolves the calling consumer by its enrolled public key (the SSH `au
 The canonical message signed is `{challenge_id}.{nonce}`; signet speaks only the Portcullis `/v1/attest/{challenge,token,renew}` HTTP contract.
 
 Re-runs reuse the cache and renew the bearer as it ages: a cached token still more than 30 minutes from expiry is reused as-is; within 30 minutes of expiry signet renews it; a `401` on renew (or a token past its maximum lifetime) triggers a fresh attestation. The cache is keyed by broker URL and identity, so one machine can hold separate bearers for several brokers or identities without collision.
+
+### agent
+
+```text
+signet agent --bind <socket>=<slot> [--bind <socket>=<slot> ...] [--backend piv]
+```
+
+`agent` is the deliberate exception to signet's otherwise daemonless model. It exists for one problem: a workload that must attest but **cannot reach the hardware at all** — a container with no pcscd socket and no path to the YubiKey. Mounting the token into that container is the wrong trade-off, so instead one trusted process owns the token and signs on request, the way `ssh-agent` holds a key and signs for clients.
+
+One `agent` process serves a Unix socket per `--bind`, and each socket is pinned to one slot at start-up. A client connecting to a socket can only ever sign with **that socket's** key: the slot is never taken from the request, so a compromised client cannot attest as another identity. Because the token is single-access, all bindings share one process and hardware access is serialised. The agent answers exactly two operations — return the public key, and sign a message — and **never generates or overwrites a key**; enrolment stays a deliberate, hands-on host operation.
+
+A client reaches the agent with `--agent <socket>` on `sign`, `enrol`, or `auth`:
+
+```text
+signet auth --agent /run/signet/browser-driver.sock https://portcullis.example.internal
+```
+
+`--agent` swaps the local-hardware signer for one that forwards over the socket; nothing else changes, and the broker — which resolves identity by public key — neither knows nor cares that the signature came via the agent. The consuming side (e.g. the `mcp-common` signer) selects agent mode through `SIGNET_AGENT_SOCKET`.
 
 ## Wiring signet as a credential helper
 
