@@ -25,10 +25,11 @@
 //	signet enrol   [flags] [--user-presence]
 //	signet sign    [flags] <message>
 //	signet auth    [flags] <broker-url>
+//	signet verify  [flags] --broker <url> [--credential <name>]
 //	signet version
 //	signet doctor  [flags]
 //
-// Flags (enrol, sign, auth, doctor):
+// Flags (enrol, sign, auth, verify, doctor):
 //
 //	--backend   secure-enclave | tpm | piv   (default: auto-detect for the platform)
 //	--slot      9a | 9c | 9d | 9e | 82..95   (piv backend only; default: 9c)
@@ -52,10 +53,43 @@ import (
 var version = "dev"
 
 func main() {
+	// 'verify' is handled here rather than in run() because it needs typed exit
+	// codes (2–5) that cannot be expressed as errors and still give os.Exit(1).
+	if len(os.Args) > 1 && os.Args[1] == "verify" {
+		os.Exit(runVerify(os.Args[2:]))
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runVerify parses verify's flags and calls cmdVerify, returning the typed
+// exit code. It is separate from run() so typed exits never conflict with
+// run()'s single error/exit-1 contract.
+func runVerify(args []string) int {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	backend, slot, identity, agent := signerFlags(fs)
+	broker := fs.String("broker", "", "broker URL (required)")
+	cred := fs.String("credential", "", "credential name to probe (optional)")
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if *broker == "" {
+		fmt.Fprintln(os.Stderr, "error: --broker is required")
+		return 1
+	}
+	signer, err := selectSigner(*backend, *slot, *identity, *agent)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	code, err := cmdVerify(signer, *broker, *cred)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	}
+	return code
 }
 
 // signerFlags registers the backend/slot/identity/agent selection flags shared by
@@ -163,6 +197,12 @@ func run(args []string) error {
 		}
 		return cmdDoctor()
 
+	case "verify":
+		// Reached only if someone calls run("verify", ...) directly (e.g. in tests
+		// that go through run()). In practice main() short-circuits verify before
+		// run() is called, so this branch exists only for completeness.
+		return fmt.Errorf("use 'signet verify' directly; typed exit codes require os.Exit")
+
 	default:
 		return fmt.Errorf("unknown subcommand %q\n\n%s", args[0], helpText())
 	}
@@ -184,16 +224,28 @@ Subcommands:
   enrol    Generate (or recover) the hardware key and print the SPKI public key
   sign     Sign a message with the hardware key and print the base64 signature
   auth     Attest to a broker and print the Authorization header (JSON)
+  verify   Consumer pre-flight: attest and optionally probe a credential vend
   agent    Own the hardware and sign on request over Unix sockets (serve mode)
   version  Print the signet version, platform, and Go runtime
   doctor   Probe each backend and report availability
 
-Flags (enrol, sign, auth, doctor):
+Flags (enrol, sign, auth, verify, doctor):
   --backend    secure-enclave | tpm | piv   (default: auto-detect)
   --slot       9a | 9c | 9d | 9e | 82..95  (piv backend only; default: 9c)
   --identity   <name>                       (secure-enclave only; default: consumer)
-  --agent      <socket>                      (sign/enrol/auth; sign via an agent, not local hardware)
+  --agent      <socket>                      (sign/enrol/auth/verify; sign via an agent, not local hardware)
   --user-presence                           (enrol only; require Touch ID per sign)
+
+Verify flags:
+  --broker     <url>    broker URL (required)
+  --credential <name>   credential name to probe vend scope (optional)
+
+Verify exit codes:
+  0  success — attestation accepted; credential resolvable (if --credential given)
+  2  key missing — no key enrolled for this identity
+  3  attestation rejected — broker refused the attestation
+  4  credential out of scope — identity exists but credential is not in its scope
+  5  credential not found — credential name absent from the catalogue
 
 Agent (serve mode):
   signet agent --bind <socket>=<slot> [--bind ...] [--backend piv]

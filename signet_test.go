@@ -49,7 +49,7 @@ func TestSanitiseHost(t *testing.T) {
 // TestHelpText verifies the help block mentions all subcommands.
 func TestHelpText(t *testing.T) {
 	text := helpText()
-	for _, sub := range []string{"enrol", "sign", "auth", "version", "doctor"} {
+	for _, sub := range []string{"enrol", "sign", "auth", "verify", "version", "doctor"} {
 		if !strings.Contains(text, sub) {
 			t.Errorf("helpText() does not mention %q", sub)
 		}

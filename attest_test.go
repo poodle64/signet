@@ -22,13 +22,17 @@ const stubSPKI = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEAQIDBAUGBwgJCgsMDQ4PEBESEx
 // stubSigner is a hardware-free Signer that returns a canned signature and
 // a deterministic public key (stubSPKI) for use in tests.
 type stubSigner struct {
-	sig    string
-	err    error
-	pubKey string // overrides stubSPKI when non-empty
+	sig       string
+	err       error
+	pubKey    string // overrides stubSPKI when non-empty
+	pubKeyErr error  // when non-nil, PublicKeyDER returns this error
 }
 
 func (s *stubSigner) Enrol(_ bool) (string, error) { return stubSPKI, nil }
 func (s *stubSigner) PublicKeyDER() (string, error) {
+	if s.pubKeyErr != nil {
+		return "", s.pubKeyErr
+	}
 	if s.pubKey != "" {
 		return s.pubKey, nil
 	}
