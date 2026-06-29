@@ -90,3 +90,4 @@ logs/
 # Internal product docs — maintainer record of intent and rationale, kept out of
 # the published (public) repo. The outward-facing "why" lives in README.md.
 /docs/product/
+.mcp.json
