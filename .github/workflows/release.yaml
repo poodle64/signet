@@ -49,10 +49,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest
+          - runner: macos-latest # by-exception (2026-07-03): needs Xcode/swiftc for Swift shim — cgo cross-compilation not viable on household runner
             goos: darwin
             goarch: arm64
-          - runner: ubuntu-latest
+          - runner: ubuntu-latest # by-exception (2026-07-03): cgo requires native linux/amd64 sysroot — cross-compilation not viable on household runner
             goos: linux
             goarch: amd64
     runs-on: ${{ matrix.runner }}
@@ -160,3 +160,10 @@ jobs:
             || gh release upload "$TAG" \
               "${{ steps.pkg_go.outputs.tar }}" "${{ steps.pkg_go.outputs.sha }}" \
               --clobber
+
+      - name: Notify failure (ntfy infra)
+        if: failure() && github.event_name != 'pull_request'
+        uses: poodle64/master-project/.github/actions/ntfy-failure@main
+        with:
+          title: 'signet: release build failed'
+          token: ${{ secrets.NTFY_TOKEN }}
