@@ -15,7 +15,9 @@ signet is a hardware-rooted signing CLI: one self-contained, cross-platform Go b
 
 - Generates and holds a non-exportable P-256 key in secure hardware and prints its public half (SPKI DER, base64) for one-time enrolment with the broker (`enrol`)
 - Signs an arbitrary message in hardware (SHA-256 / ECDSA P-256, IEEE P1363 `r||s`) for testing or bespoke flows (`sign`)
-- Runs the credential-helper attestation flow (`auth`): request a challenge, sign it in hardware, exchange the signature for a short-lived bearer, cache it (keyed by broker URL **and** identity), renew as it ages, and emit an `{"Authorization":"Bearer …"}` header on stdout
+- Runs the credential-helper attestation flow (`auth`): request a challenge, sign it in hardware, exchange the signature for a short-lived bearer, cache it (keyed by broker URL **and** the enrolled key's fingerprint), renew as it ages, and emit an `{"Authorization":"Bearer …"}` header on stdout
+- Pre-flights a consumer (`verify`): runs the attestation round-trip (and optionally probes a credential vend) and exits with a typed code per failure mode (0/2/3/4/5)
+- Owns the hardware for workloads that cannot reach it (`agent`): one daemon holds the token and serves **pubkey and sign only** over per-slot Unix sockets — the ssh-agent pattern — so a container attests without the token ever being mounted into it; clients select it with `--agent <socket>`
 - Compiles in three backends and selects one at runtime: Secure Enclave (macOS), TPM 2.0 (Linux/Windows), YubiKey/PIV (cross-platform); selected by `--backend` flag or OS/hardware auto-detection
 - Ships per-platform release binaries installable via a Homebrew tap and a nix (`fetchurl` + SRI) derivation
 
@@ -25,7 +27,7 @@ signet is a hardware-rooted signing CLI: one self-contained, cross-platform Go b
 - Does NOT make any authorisation decision; it proves possession of a hardware key, and every challenge issuance, signature verification, bearer minting, and vend-scope decision is the broker's
 - Does NOT fall back to a software key; a host with no secure hardware fails loudly rather than degrading to a key on disk
 - Does NOT hold a long-lived secret; the only on-disk state is a short-lived bearer cache and (macOS) the Enclave's opaque hardware-bound key blob
-- Does NOT run a daemon, socket, or keepalive loop; it runs once and exits, like `git credential` / `docker-credential-*` / AWS `credential_process`
+- Does NOT keep the credential-helper flows resident: `auth` (like every subcommand except `agent`) runs once and exits, like `git credential` / `docker-credential-*` / AWS `credential_process`. The one long-lived mode is `agent`, which exists solely to own the hardware for socket clients; it serves pubkey/sign only, never generates a key, and never talks to the broker
 
 ## Authority Note
 
@@ -36,29 +38,31 @@ This rule documents project-specific practice and relies on master rules for req
 ### Technology Stack
 
 - **Language**: Go 1.25; cgo required (the Secure Enclave and PIV backends link C libraries; TPM is pure Go)
-- **Backends**: Secure Enclave via a CryptoKit/Swift shim (cgo, macOS), TPM 2.0 via `github.com/google/go-tpm` (pure Go), YubiKey/PIV slot 9c via `github.com/go-piv/piv-go/v2` (cgo, PC/SC)
+- **Backends**: Secure Enclave via a CryptoKit/Swift shim (cgo, macOS), TPM 2.0 via `github.com/google/go-tpm` (pure Go), YubiKey/PIV via `github.com/go-piv/piv-go/v2` (cgo, PC/SC) on a selectable slot (`--slot`; 9a/9c/9d/9e/82..95, default 9c — one identity per slot)
 - **Crypto**: P-256 / ECDSA, SHA-256, IEEE P1363 signatures; SPKI DER public keys
 - **Protocol**: Portcullis `/v1/attest/{challenge,token,renew}` over HTTP
-- **Build/dist**: `make build` (on macOS: `xcrun swiftc` emits an object, `ar` archives it into `libsignet_se.a`, then the cgo `go build` links it; on other platforms: just the cgo `go build`), Homebrew tap, nix `fetchurl` + SRI derivation, per-platform release workflow
+- **Build/dist**: `make build` (on macOS: `xcrun swiftc` compiles `internal/signer/enclave.swift` into `internal/signer/libsignet_se.a`, then `go build ./cmd/signet` links it via cgo; on other platforms: just the cgo `go build`), Homebrew tap, nix `fetchurl` + SRI derivation, per-platform release workflow
+- **Layout**: `cmd/signet/` (CLI dispatch) + `internal/signer/` (backends) + `internal/attest/` (broker client, cache, auth/verify) + `internal/agent/` (daemon + socket client) + `internal/datadir/` (`~/.signet`)
 
 ### Architecture
 
 ```text
-  CLI (enrol | sign | auth)
+  CLI (enrol | sign | auth | verify | doctor | version)          CLI (agent)
+        │                                                             │
+        ▼                                                             ▼
+  Signer interface  ──selected at runtime──▶  backends          per-slot Unix sockets
+        │                     ├─ Secure Enclave (CryptoKit shim,      │ pubkey/sign only,
+        │                     │                  cgo, macOS)          │ hardware serialised
+        │                     ├─ TPM 2.0        (go-tpm, pure Go)     ▼
+        │                     └─ YubiKey/PIV    (go-piv, cgo/PC-SC)  --agent clients
+        ▼                            ▲                                (a Signer that dials
+  Attestation client ──HTTP──▶ broker /v1/attest/{challenge,token,renew}  the socket)
         │
         ▼
-  Signer interface  ──selected at runtime──▶  one of three backends
-        │                                       ├─ Secure Enclave (CryptoKit shim, cgo, macOS)
-        │                                       ├─ TPM 2.0        (go-tpm, pure Go)
-        │                                       └─ YubiKey/PIV    (go-piv, cgo/PC-SC)
-        ▼
-  Attestation client  ──HTTP──▶  broker /v1/attest/{challenge,token,renew}
-        │
-        ▼
-  Bearer cache (file, keyed by broker URL + identity)
+  Bearer cache (file, keyed by broker URL + enrolled-key fingerprint)
 ```
 
-The CLI and the attestation client are written against the small `Signer` interface (enrol / sign) and never against a specific backend. Only the Secure Enclave backend sits behind a build tag (it links a macOS-only Swift shim); TPM and PIV compile on every platform.
+The CLI, the attestation client, and the agent are written against the small `Signer` interface (enrol / pubkey / sign) and never against a specific backend; the `--agent` client is itself just another `Signer`. Only the Secure Enclave backend sits behind a build tag (it links a macOS-only Swift shim); TPM and PIV compile on every platform.
 
 ### Core Philosophy
 
@@ -84,7 +88,7 @@ signet is designed around a **non-exportable key sealed in hardware**: there is 
 - Go with cgo; per-platform native builds (the SE and PIV backends cannot be cross-compiled)
 - Only the Secure Enclave backend may sit behind a build tag (it links a macOS-only Swift shim); TPM and PIV must compile on every platform, and a build tag must NOT be added that drops a backend from the default build
 - Dependencies pinned and `go.sum` committed; release binaries pinned by SRI hash (supply-chain discipline, `.claude/rules/security/`)
-- Configuration variables, cache, and data paths carry the `SIGNET_*` / `signet` name prefix (no broker brand coupling)
+- Configuration is per-subcommand flags only (`--backend`, `--slot`, `--identity`, `--agent`); there are no environment variables. Cache and data paths carry the `signet` name prefix (`~/.signet/`; no broker brand coupling)
 - Australian English in all prose and documentation
 
 ## Sources of Truth

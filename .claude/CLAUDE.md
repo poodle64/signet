@@ -7,14 +7,16 @@ Full stack, scope, architecture, and constraints live in `.claude/rules/00-proje
 ## Commands
 
 ```bash
-make build       # macOS: xcrun swiftc emits se_swift.o, ar archives it into libsignet_se.a, then CGO_ENABLED=1 go build links it; other platforms: just CGO_ENABLED=1 go build
+make build       # macOS: xcrun swiftc compiles internal/signer/enclave.swift into internal/signer/libsignet_se.a, then CGO_ENABLED=1 go build ./cmd/signet links it; other platforms: just the cgo go build
 make test        # CGO_ENABLED=1 go test ./...
 make clean
 ```
 
+Layout: `cmd/signet/` (CLI) + `internal/signer|attest|agent|datadir` (backends, broker client, agent daemon, data dir).
+
 ## Key Reminders
 
-- cgo means **per-platform native builds**: the SE and PIV backends cannot be cross-compiled. Plain `go build` on macOS fails to link unless `libsignet_se.a` exists; always `make build`.
+- cgo means **per-platform native builds**: the SE and PIV backends cannot be cross-compiled. Plain `go build` on macOS fails to link unless `internal/signer/libsignet_se.a` exists; always `make build`.
 - The go-tpm software simulator (test-only) is behind the `tpmsimulator` build tag so its OpenSSL dependency stays out of normal builds.
 - No software-key fallback and no key at rest are hard invariants; see `.claude/rules/20-key-custody.md`.
 
