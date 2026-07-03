@@ -22,7 +22,7 @@ Selects the PIV signing slot. Accepted values: `9a`, `9c`, `9d`, `9e`, or a reti
 
 Names which hardware keypair to sign as — the **local label of a keypair**, exactly like the filename you give an SSH key. Defaults to `consumer`.
 
-This is why the flag exists. A single machine can hold more than one consumer (say a browser-driver sidecar and a separate vend client), and each needs its own distinct keypair so the broker can tell them apart. Without a name there would be a single anonymous key slot per machine; with it you can have two consumers on one Mac, each with its own blob and its own enrolled public key.
+This is why the flag exists. A single machine can hold more than one consumer (say a sidecar service and a separate vend client), and each needs its own distinct keypair so the broker can tell them apart. Without a name there would be a single anonymous key slot per machine; with it you can have two consumers on one Mac, each with its own blob and its own enrolled public key.
 
 The name is **purely local. It never crosses the wire to the broker.** signet sends the broker only the key's public half; the broker identifies a consumer by that public key, not by the name chosen locally. Renaming an identity does not change the key; it just looks in a different file.
 

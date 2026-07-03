@@ -41,7 +41,7 @@
 // --identity names the local Secure-Enclave key blob, the way an SSH key
 // filename picks one key of several, so one Mac can hold more than one identity.
 // It is local-only and never sent to the broker, which resolves the identity
-// from the presented public key (resolve-by-key, #73). It is ignored by the PIV
+// from the presented public key (resolve-by-key). It is ignored by the PIV
 // and TPM backends, where the slot / persistent handle selects the key.
 package main
 

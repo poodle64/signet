@@ -441,7 +441,7 @@ func TestLoadCache_CorruptFile(t *testing.T) {
 }
 
 // TestCanonicalMessage verifies the signed-message construction matches
-// the broker's canonical_message(challenge_id, nonce) in attestation.py:
+// the broker's canonical_message(challenge_id, nonce) form:
 // UTF-8 of "{challenge_id}.{nonce}".
 func TestCanonicalMessage(t *testing.T) {
 	cases := []struct {
@@ -469,9 +469,9 @@ func TestSanitiseHost(t *testing.T) {
 		want  string
 	}{
 		{"http://localhost:8311", "http_localhost_8311"},
-		{"https://portcullis.example.internal", "https_portcullis.example.internal"},
-		{"https://portcullis.example.internal/", "https_portcullis.example.internal_"},
-		{"https://portcullis.example.internal:8443/api", "https_portcullis.example.internal_8443_api"},
+		{"https://broker.example.internal", "https_broker.example.internal"},
+		{"https://broker.example.internal/", "https_broker.example.internal_"},
+		{"https://broker.example.internal:8443/api", "https_broker.example.internal_8443_api"},
 	}
 	for _, tc := range cases {
 		got := sanitiseHost(tc.input)

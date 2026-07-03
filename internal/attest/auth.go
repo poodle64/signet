@@ -15,7 +15,7 @@ import (
 // and prints {"Authorization":"Bearer <key>"} to stdout.
 //
 // The bearer cache is keyed by broker URL and the enrolled public key's
-// fingerprint (resolve-by-key, #73).
+// fingerprint (resolve-by-key).
 func Auth(s signer.Signer, brokerURL string) error {
 	// Derive the fingerprint from the enrolled public key to key the cache.
 	spkiB64, err := s.PublicKeyDER()

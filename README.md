@@ -114,7 +114,7 @@ Wire `signet auth` as the `headersHelper` in a Claude Code MCP config, or as any
 
 To use a specific backend: `signet auth --backend piv https://your-broker.example.internal`
 
-The [Portcullis](https://github.com/poodle64/portcullis) secrets broker is one example consumer of this attestation protocol; signet speaks the `/v1/attest` HTTP contract and is not coupled to any specific broker's business logic.
+signet speaks the `/v1/attest` HTTP contract and nothing more; it is not coupled to any specific broker's business logic, and any secrets broker implementing the contract can consume it.
 
 ## Documentation
 

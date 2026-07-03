@@ -1,6 +1,6 @@
 # signet
 
-Hardware-rooted signing CLI; one self-contained Go binary that proves _which machine_ you are, using a non-exportable key sealed in whatever secure hardware the host has (Apple Secure Enclave, TPM 2.0, or YubiKey/PIV). It is the machine-identity credential helper for the Portcullis secrets broker: it signs the broker's attestation challenge in hardware and exchanges the proof for a short-lived bearer.
+Hardware-rooted signing CLI; one self-contained Go binary that proves _which machine_ you are, using a non-exportable key sealed in whatever secure hardware the host has (Apple Secure Enclave, TPM 2.0, or YubiKey/PIV). It is the machine-identity credential helper for a secrets broker: it signs the broker's `/v1/attest` challenge in hardware and exchanges the proof for a short-lived bearer. signet is broker-agnostic; any service implementing the attest contract can consume it.
 
 Full stack, scope, architecture, and constraints live in `.claude/rules/00-project-foundations.md`; this file carries only the non-obvious build and custody reminders.
 
@@ -23,5 +23,5 @@ Layout: `cmd/signet/` (CLI) + `internal/signer|attest|agent|datadir` (backends, 
 ## Sources of Truth
 
 - **Rules**: `.claude/rules/` (core + security via symlink)
-- **Broker contract**: the Portcullis `/v1/attest` HTTP API
+- **Broker contract**: the `/v1/attest` HTTP API (any broker implementing it)
 - Full project context (stack, scope, sources of truth): `.claude/rules/00-project-foundations.md`

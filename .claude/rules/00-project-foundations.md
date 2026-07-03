@@ -7,7 +7,7 @@ paths:
 
 ## Purpose
 
-signet is a hardware-rooted signing CLI: one self-contained, cross-platform Go binary that proves _which machine_ it runs on by holding a non-exportable P-256 signing identity in secure hardware (Apple Secure Enclave, a TPM, or a YubiKey/PIV token), signing a broker's attestation challenge with it, and exchanging that proof for a short-lived bearer token it caches and hands to consumers. It is the machine-identity client for the Portcullis secrets broker; the same shape as AWS IAM Roles Anywhere, generalised across the three secure-hardware substrates a real fleet actually has and scoped to one broker's vend contract.
+signet is a hardware-rooted signing CLI: one self-contained, cross-platform Go binary that proves _which machine_ it runs on by holding a non-exportable P-256 signing identity in secure hardware (Apple Secure Enclave, a TPM, or a YubiKey/PIV token), signing a broker's attestation challenge with it, and exchanging that proof for a short-lived bearer token it caches and hands to consumers. It is the machine-identity client for a secrets broker implementing the `/v1/attest` vend contract; the same shape as AWS IAM Roles Anywhere, generalised across the three secure-hardware substrates a real fleet actually has and scoped to one broker contract.
 
 ## Project Scope
 
@@ -23,7 +23,7 @@ signet is a hardware-rooted signing CLI: one self-contained, cross-platform Go b
 
 ### What This Project Does NOT Do
 
-- Does NOT contain any broker code; it speaks the Portcullis `/v1/attest` HTTP contract and nothing more (no sidecar, no helper process, no PKCS#11 module)
+- Does NOT contain any broker code; it speaks the `/v1/attest` HTTP contract and nothing more (no sidecar, no helper process, no PKCS#11 module)
 - Does NOT make any authorisation decision; it proves possession of a hardware key, and every challenge issuance, signature verification, bearer minting, and vend-scope decision is the broker's
 - Does NOT fall back to a software key; a host with no secure hardware fails loudly rather than degrading to a key on disk
 - Does NOT hold a long-lived secret; the only on-disk state is a short-lived bearer cache and (macOS) the Enclave's opaque hardware-bound key blob
@@ -40,7 +40,7 @@ This rule documents project-specific practice and relies on master rules for req
 - **Language**: Go 1.25; cgo required (the Secure Enclave and PIV backends link C libraries; TPM is pure Go)
 - **Backends**: Secure Enclave via a CryptoKit/Swift shim (cgo, macOS), TPM 2.0 via `github.com/google/go-tpm` (pure Go), YubiKey/PIV via `github.com/go-piv/piv-go/v2` (cgo, PC/SC) on a selectable slot (`--slot`; 9a/9c/9d/9e/82..95, default 9c — one identity per slot)
 - **Crypto**: P-256 / ECDSA, SHA-256, IEEE P1363 signatures; SPKI DER public keys
-- **Protocol**: Portcullis `/v1/attest/{challenge,token,renew}` over HTTP
+- **Protocol**: `/v1/attest/{challenge,token,renew}` over HTTP
 - **Build/dist**: `make build` (on macOS: `xcrun swiftc` compiles `internal/signer/enclave.swift` into `internal/signer/libsignet_se.a`, then `go build ./cmd/signet` links it via cgo; on other platforms: just the cgo `go build`), Homebrew tap, nix `fetchurl` + SRI derivation, per-platform release workflow
 - **Layout**: `cmd/signet/` (CLI dispatch) + `internal/signer/` (backends) + `internal/attest/` (broker client, cache, auth/verify) + `internal/agent/` (daemon + socket client) + `internal/datadir/` (`~/.signet`)
 
@@ -97,7 +97,7 @@ signet is designed around a **non-exportable key sealed in hardware**: there is 
 - **Security rules**: `.claude/rules/security/` (via symlink); supply-chain and authentication standards
 - **Secrets governance**: `docs/master/governance/secrets/`; the attestation architecture this client participates in
 - **Product definition**: `docs/product/` (P01 intent, P03 rationalisation, P08 architecture, P09 decisions; internal, gitignored)
-- **Broker contract**: the Portcullis `/v1/attest` HTTP API
+- **Broker contract**: the `/v1/attest` HTTP API (any broker implementing it)
 - **GitHub Issues**: task tracking and feature planning
 
 ## Rule Interpretation Notes

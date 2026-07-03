@@ -62,7 +62,7 @@ Runs the full attestation flow against the broker at `<broker-url>`: requests a 
 
 The broker resolves the calling consumer by its enrolled public key (the SSH `authorized_keys` model); no identity id is presented or required. `--identity` selects which local keypair signs the challenge (defaults to `consumer`); `--backend` overrides auto-detection of the hardware backend.
 
-The canonical message signed is `{challenge_id}.{nonce}`; signet speaks only the Portcullis `/v1/attest/{challenge,token,renew}` HTTP contract.
+The canonical message signed is `{challenge_id}.{nonce}`; signet speaks only the `/v1/attest/{challenge,token,renew}` HTTP contract.
 
 Re-runs reuse the cache and renew the bearer as it ages: a cached token still more than 30 minutes from expiry is reused as-is; within 30 minutes of expiry signet renews it; a `401` on renew (or a token past its maximum lifetime) triggers a fresh attestation. The cache is keyed by broker URL and the enrolled public key's fingerprint (the first 16 hex characters of SHA-256 over the SPKI DER public key), so re-enrolling a new key for the same broker never serves a stale bearer minted for the old key.
 
@@ -79,10 +79,10 @@ One `agent` process serves a Unix socket per `--bind`, and each socket is pinned
 A client reaches the agent with `--agent <socket>` on `sign`, `enrol`, or `auth`:
 
 ```text
-signet auth --agent /run/signet/browser-driver.sock https://portcullis.example.internal
+signet auth --agent /run/signet/myapp.sock https://broker.example.internal
 ```
 
-`--agent` swaps the local-hardware signer for one that forwards over the socket; nothing else changes, and the broker — which resolves identity by public key — neither knows nor cares that the signature came via the agent. The consuming side (e.g. the `mcp-common` Python signer) has its own `SIGNET_AGENT_SOCKET` environment variable that tells it which socket path to pass to signet via `--agent`; that variable belongs to the consumer, not to signet itself.
+`--agent` swaps the local-hardware signer for one that forwards over the socket; nothing else changes, and the broker — which resolves identity by public key — neither knows nor cares that the signature came via the agent. A consuming application that wraps signet decides for itself how to configure the socket path it passes via `--agent`; signet has no environment variable of its own.
 
 ## Wiring signet as a credential helper
 
@@ -93,10 +93,10 @@ For a Claude Code MCP `http` server, wire `auth` as the `headersHelper`. The bac
 ```json
 {
   "mcpServers": {
-    "portcullis": {
+    "broker": {
       "type": "http",
-      "url": "https://portcullis.example.internal/mcp",
-      "headersHelper": "signet auth --backend piv https://portcullis.example.internal"
+      "url": "https://broker.example.internal/mcp",
+      "headersHelper": "signet auth --backend piv https://broker.example.internal"
     }
   }
 }
@@ -126,7 +126,7 @@ signet verify --broker <url> [--credential <name>] [--backend <backend>] [--iden
 Example output (successful attestation, credential probed):
 
 ```text
-signet verify — broker: https://portcullis.example.internal
+signet verify — broker: https://broker.example.internal
 
   key              OK             key present
   attest           OK             bearer minted
@@ -138,7 +138,7 @@ result: OK
 Example for a machine not yet enrolled:
 
 ```text
-signet verify — broker: https://portcullis.example.internal
+signet verify — broker: https://broker.example.internal
 
   key              FAIL           no key enrolled: open ~/.signet/se-consumer.key: no such file or directory
 

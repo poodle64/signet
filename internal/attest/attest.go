@@ -1,4 +1,4 @@
-// Package attest speaks the Portcullis /v1/attest HTTP contract: request a
+// Package attest speaks the broker /v1/attest HTTP contract: request a
 // challenge, sign it in hardware, exchange the proof for a short-lived bearer,
 // and renew that bearer as it ages. It also carries the two CLI flows built on
 // that contract: Auth (the credential helper) and Verify (the consumer
@@ -48,8 +48,8 @@ func (e *BrokerError) Error() string {
 	return fmt.Sprintf("broker %d: %s", e.Status, e.Body)
 }
 
-// canonicalMessage constructs the UTF-8 message the broker's attestation.py
-// canonical_message() produces: "{challenge_id}.{nonce}".
+// canonicalMessage constructs the UTF-8 message the broker's canonical form
+// prescribes: "{challenge_id}.{nonce}".
 // This is the string that must be SHA-256 digested and signed.
 func canonicalMessage(challengeID, nonce string) string {
 	return challengeID + "." + nonce
@@ -94,8 +94,8 @@ func brokerPost(endpoint string, body any, bearerKey string, result any) error {
 // attestFresh performs legs 1 and 2 of the attestation protocol:
 // /v1/attest/challenge then /v1/attest/token.
 //
-// The broker resolves the identity from the presented public key (resolve-by-key,
-// #73). Leg 1 sends {"public_key_der": <spki-b64>}; leg 2 sends only
+// The broker resolves the identity from the presented public key
+// (resolve-by-key). Leg 1 sends {"public_key_der": <spki-b64>}; leg 2 sends only
 // {challenge_id, nonce, signature_b64} — identity_id is not sent.
 func attestFresh(s signer.Signer, brokerURL string) (*bearerCache, error) {
 	// Obtain the enrolled public key; fail fast if no key has been enrolled.
