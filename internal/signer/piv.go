@@ -1,4 +1,4 @@
-// signer_piv.go: YubiKey PIV backend for signet.
+// piv.go: YubiKey PIV backend for signet.
 //
 // Uses github.com/go-piv/piv-go/v2/piv (cgo, requires PC/SC). Operates on a
 // configurable PIV slot (--slot; default 9c, Digital Signature) with
@@ -11,7 +11,7 @@
 //
 // Sign: SHA-256 digests the message, calls the slot's crypto.Signer, and
 // converts the DER output to the broker's P1363 r||s wire format.
-package main
+package signer
 
 import (
 	"crypto"
@@ -33,8 +33,8 @@ type pivSigner struct {
 	label string // human label for the slot, used only in error messages
 }
 
-// newPivSigner resolves the PIV slot name and returns a signer.
-func newPivSigner(slot string) (*pivSigner, error) {
+// newPIVSigner resolves the PIV slot name and returns a signer.
+func newPIVSigner(slot string) (*pivSigner, error) {
 	s, label, err := pivSlot(slot)
 	if err != nil {
 		return nil, err

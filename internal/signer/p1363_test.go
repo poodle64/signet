@@ -1,5 +1,5 @@
 // sig_common_test.go: unit tests for the DER→P1363 format conversion helper.
-package main
+package signer
 
 import (
 	"crypto/ecdsa"

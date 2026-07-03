@@ -1,8 +1,8 @@
 //go:build darwin
 
-// signer_darwin.go: Secure Enclave backend for signet on macOS.
+// enclave_darwin.go: Secure Enclave backend for signet on macOS.
 //
-// Uses CryptoKit's SecureEnclave.P256 through a small Swift shim (se_swift.swift)
+// Uses CryptoKit's SecureEnclave.P256 through a small Swift shim (enclave.swift)
 // compiled to a static archive and linked into this one binary via cgo. The
 // Enclave returns an OPAQUE, hardware-wrapped key blob which signet stores in a
 // file it owns; the keychain is never touched. That is the whole trick: keychain
@@ -15,7 +15,7 @@
 // The build needs the Swift archive in place; see the Makefile (`make build`).
 // Notarisation is irrelevant to Secure Enclave access (it is a Gatekeeper
 // distribution gate, not a runtime keychain/SE gate).
-package main
+package signer
 
 /*
 #cgo LDFLAGS: ${SRCDIR}/libsignet_se.a -framework CryptoKit -framework Foundation -framework Security
@@ -48,6 +48,8 @@ import (
 	"os"
 	"path/filepath"
 	"unsafe"
+
+	"github.com/poodle64/signet/internal/datadir"
 )
 
 // seDefaultTag identifies the SE signing key; it names the on-disk blob file so
@@ -57,11 +59,24 @@ import (
 // any per-service identity is selected with an explicit --identity.
 const seDefaultTag = "consumer"
 
+// seAvailable reports whether CryptoKit sees a Secure Enclave on this Mac.
+func seAvailable() bool {
+	return C.signet_se_available() != 0
+}
+
+// probeEnclave is the doctor probe for the Secure Enclave backend.
+func probeEnclave() (bool, string) {
+	if seAvailable() {
+		return true, "CryptoKit reports Secure Enclave present"
+	}
+	return false, "CryptoKit reports no Secure Enclave (needs Apple Silicon or T2)"
+}
+
 // enclaveSigner signs with the macOS Secure Enclave via CryptoKit (cgo). The
-// hardware-wrapped key blob is stored at blobPath; no external helper binary and
-// no code-signing entitlement are required.
+// hardware-wrapped key blob is stored under signet's data directory; no
+// external helper binary and no code-signing entitlement are required.
 type enclaveSigner struct {
-	blobPath string
+	tag string
 }
 
 func newEnclaveSigner(identity string) *enclaveSigner {
@@ -69,14 +84,18 @@ func newEnclaveSigner(identity string) *enclaveSigner {
 	if tag == "" {
 		tag = seDefaultTag
 	}
-	return &enclaveSigner{blobPath: seKeyPath(tag)}
+	return &enclaveSigner{tag: tag}
 }
 
-// seKeyPath returns the path to the SE key-blob file for tag, under signet's data
-// directory (~/.signet). The blob is persistent, hardware-wrapped key material.
-func seKeyPath(tag string) string {
-	base, _ := signetHome()
-	return filepath.Join(base, "se-"+safeFilename(tag)+".key")
+// blobPath returns the path to the SE key-blob file for this signer's tag,
+// under signet's data directory (~/.signet). The blob is persistent,
+// hardware-wrapped key material.
+func (e *enclaveSigner) blobPath() (string, error) {
+	base, err := datadir.Path()
+	if err != nil {
+		return "", fmt.Errorf("secure-enclave: %w", err)
+	}
+	return filepath.Join(base, "se-"+safeFilename(e.tag)+".key"), nil
 }
 
 // safeFilename reduces an arbitrary tag to a filesystem-safe component.
@@ -97,16 +116,21 @@ func safeFilename(s string) string {
 }
 
 func (e *enclaveSigner) Enrol(userPresence bool) (string, error) {
-	if C.signet_se_available() == 0 {
-		return "", fmt.Errorf("Secure Enclave is not available on this Mac (needs Apple Silicon or a T2 chip)")
+	if !seAvailable() {
+		return "", fmt.Errorf("secure-enclave: not available on this Mac (needs Apple Silicon or a T2 chip)")
+	}
+
+	path, err := e.blobPath()
+	if err != nil {
+		return "", err
 	}
 
 	// Idempotent and non-destructive: an existing key is never clobbered; return
 	// its public key so re-enrolling the same identity is a no-op.
-	if blob, err := os.ReadFile(e.blobPath); err == nil {
+	if blob, err := os.ReadFile(path); err == nil {
 		x963, err := sePublicKey(blob)
 		if err != nil {
-			return "", fmt.Errorf("Secure Enclave: read existing key %s: %w", e.blobPath, err)
+			return "", fmt.Errorf("secure-enclave: read existing key %s: %w", path, err)
 		}
 		return marshalSPKI(x963)
 	}
@@ -115,7 +139,7 @@ func (e *enclaveSigner) Enrol(userPresence bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writeKeyBlob(e.blobPath, blob); err != nil {
+	if err := writeKeyBlob(path, blob); err != nil {
 		return "", err
 	}
 	return marshalSPKI(x963)
@@ -124,21 +148,29 @@ func (e *enclaveSigner) Enrol(userPresence bool) (string, error) {
 // PublicKeyDER returns the enrolled public key as base64-encoded SPKI DER
 // without generating a new key. Returns an error when no key is enrolled.
 func (e *enclaveSigner) PublicKeyDER() (string, error) {
-	blob, err := os.ReadFile(e.blobPath)
+	path, err := e.blobPath()
 	if err != nil {
-		return "", fmt.Errorf("Secure Enclave: no enrolled key at %s; run 'signet enrol' first", e.blobPath)
+		return "", err
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("secure-enclave: no enrolled key at %s; run 'signet enrol' first", path)
 	}
 	x963, err := sePublicKey(blob)
 	if err != nil {
-		return "", fmt.Errorf("Secure Enclave: read public key from %s: %w", e.blobPath, err)
+		return "", fmt.Errorf("secure-enclave: read public key from %s: %w", path, err)
 	}
 	return marshalSPKI(x963)
 }
 
 func (e *enclaveSigner) Sign(message string) (string, error) {
-	blob, err := os.ReadFile(e.blobPath)
+	path, err := e.blobPath()
 	if err != nil {
-		return "", fmt.Errorf("Secure Enclave: no enrolled key at %s; run 'signet enrol' first", e.blobPath)
+		return "", err
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("secure-enclave: no enrolled key at %s; run 'signet enrol' first", path)
 	}
 	raw, err := seSign(blob, []byte(message))
 	if err != nil {
@@ -165,7 +197,7 @@ func seCreateKey(userPresence bool) (blob, x963 []byte, err error) {
 		(*C.uint8_t)(unsafe.Pointer(&pubBuf[0])), C.int(len(pubBuf)), &pubLen,
 		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
-		return nil, nil, fmt.Errorf("Secure Enclave: %s (code %d)", cString(errBuf), int(rc))
+		return nil, nil, fmt.Errorf("secure-enclave: %s (code %d)", cString(errBuf), int(rc))
 	}
 	return clone(blobBuf[:blobLen]), clone(pubBuf[:pubLen]), nil
 }
@@ -182,7 +214,7 @@ func sePublicKey(blob []byte) ([]byte, error) {
 		(*C.uint8_t)(unsafe.Pointer(&pubBuf[0])), C.int(len(pubBuf)), &pubLen,
 		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
-		return nil, fmt.Errorf("Secure Enclave: %s (code %d)", cString(errBuf), int(rc))
+		return nil, fmt.Errorf("secure-enclave: %s (code %d)", cString(errBuf), int(rc))
 	}
 	return clone(pubBuf[:pubLen]), nil
 }
@@ -204,7 +236,7 @@ func seSign(blob, message []byte) ([]byte, error) {
 		(*C.uint8_t)(unsafe.Pointer(&sigBuf[0])), C.int(len(sigBuf)), &sigLen,
 		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if rc != 0 {
-		return nil, fmt.Errorf("Secure Enclave: %s (code %d)", cString(errBuf), int(rc))
+		return nil, fmt.Errorf("secure-enclave: %s (code %d)", cString(errBuf), int(rc))
 	}
 	return clone(sigBuf[:sigLen]), nil
 }
@@ -214,7 +246,7 @@ func seSign(blob, message []byte) ([]byte, error) {
 // marshalSPKI builds an SPKI DER (base64) from a 65-byte X9.63 P-256 point.
 func marshalSPKI(x963 []byte) (string, error) {
 	if len(x963) != p256PointLen || x963[0] != 0x04 {
-		return "", fmt.Errorf("Secure Enclave: unexpected public key encoding (len %d)", len(x963))
+		return "", fmt.Errorf("secure-enclave: unexpected public key encoding (len %d)", len(x963))
 	}
 	pub := &ecdsa.PublicKey{
 		Curve: elliptic.P256(),
@@ -223,7 +255,7 @@ func marshalSPKI(x963 []byte) (string, error) {
 	}
 	spki, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return "", fmt.Errorf("Secure Enclave: marshal SPKI: %w", err)
+		return "", fmt.Errorf("secure-enclave: marshal SPKI: %w", err)
 	}
 	return base64.StdEncoding.EncodeToString(spki), nil
 }
@@ -232,15 +264,15 @@ func marshalSPKI(x963 []byte) (string, error) {
 // writing to a temp file then renaming for atomicity.
 func writeKeyBlob(path string, blob []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("Secure Enclave: create key directory: %w", err)
+		return fmt.Errorf("secure-enclave: create key directory: %w", err)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, blob, 0o600); err != nil {
-		return fmt.Errorf("Secure Enclave: write key blob: %w", err)
+		return fmt.Errorf("secure-enclave: write key blob: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		os.Remove(tmp)
-		return fmt.Errorf("Secure Enclave: finalise key blob: %w", err)
+		return fmt.Errorf("secure-enclave: finalise key blob: %w", err)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-// signer_piv_hw_test.go: hardware round-trip test for the PIV (YubiKey) backend.
+// piv_hw_test.go: hardware round-trip test for the PIV (YubiKey) backend.
 //
 // Unlike signer_test.go (backend selection only, no hardware), this exercises a
 // real enrol -> sign -> verify cycle against a physically present YubiKey. It is
@@ -8,7 +8,7 @@
 // instead of the key, so every Enrol re-generated a fresh key and Sign reported
 // an empty slot. The decisive assertion is that two consecutive Enrol calls
 // return the SAME SPKI.
-package main
+package signer
 
 import (
 	"crypto/ecdsa"

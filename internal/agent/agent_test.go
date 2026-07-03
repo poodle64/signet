@@ -1,4 +1,4 @@
-package main
+package agent
 
 import (
 	"fmt"
@@ -8,12 +8,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/poodle64/signet/internal/signer"
 )
 
-// agentStubSigner is a hardware-free Signer for the agent tests. It tags its outputs
+// stubSigner is a hardware-free Signer for the agent tests. It tags its outputs
 // with a name so a test can tell which bound signer answered, and tracks peak
 // concurrency to prove the agent serialises hardware access.
-type agentStubSigner struct {
+type stubSigner struct {
 	name      string
 	signErr   error
 	mu        sync.Mutex
@@ -21,10 +23,10 @@ type agentStubSigner struct {
 	maxActive int
 }
 
-func (s *agentStubSigner) Enrol(userPresence bool) (string, error) { return "PUB_" + s.name, nil }
-func (s *agentStubSigner) PublicKeyDER() (string, error)           { return "PUB_" + s.name, nil }
+func (s *stubSigner) Enrol(userPresence bool) (string, error) { return "PUB_" + s.name, nil }
+func (s *stubSigner) PublicKeyDER() (string, error)           { return "PUB_" + s.name, nil }
 
-func (s *agentStubSigner) Sign(message string) (string, error) {
+func (s *stubSigner) Sign(message string) (string, error) {
 	if s.signErr != nil {
 		return "", s.signErr
 	}
@@ -43,9 +45,9 @@ func (s *agentStubSigner) Sign(message string) (string, error) {
 
 var sockCounter int64
 
-// startAgent serves signer on a fresh short-path Unix socket and returns a client
+// startAgent serves s on a fresh short-path Unix socket and returns a client
 // bound to it. Short /tmp paths stay under the macOS sun_path limit (~104 bytes).
-func startAgent(t *testing.T, signer Signer, hw *sync.Mutex) *agentSigner {
+func startAgent(t *testing.T, s signer.Signer, hw *sync.Mutex) *Client {
 	t.Helper()
 	n := atomic.AddInt64(&sockCounter, 1)
 	sock := filepath.Join("/tmp", fmt.Sprintf("signet-test-%d-%d.sock", os.Getpid(), n))
@@ -53,17 +55,17 @@ func startAgent(t *testing.T, signer Signer, hw *sync.Mutex) *agentSigner {
 	if err != nil {
 		t.Fatalf("listenUnix: %v", err)
 	}
-	go serveAgent(ln, signer, hw)
+	go serve(ln, s, hw)
 	t.Cleanup(func() {
 		ln.Close()
 		os.Remove(sock)
 	})
-	return newAgentSigner(sock)
+	return NewClient(sock)
 }
 
 func TestAgentPubkeyEnrolAndSign(t *testing.T) {
 	var hw sync.Mutex
-	client := startAgent(t, &agentStubSigner{name: "A"}, &hw)
+	client := startAgent(t, &stubSigner{name: "A"}, &hw)
 
 	pub, err := client.PublicKeyDER()
 	if err != nil || pub != "PUB_A" {
@@ -85,8 +87,8 @@ func TestAgentSlotBindingIsSocketNotClient(t *testing.T) {
 	// A must only ever get signer A: the slot is fixed by the socket, and the wire
 	// protocol carries no slot a client could use to reach across to B.
 	var hw sync.Mutex
-	a := startAgent(t, &agentStubSigner{name: "A"}, &hw)
-	b := startAgent(t, &agentStubSigner{name: "B"}, &hw)
+	a := startAgent(t, &stubSigner{name: "A"}, &hw)
+	b := startAgent(t, &stubSigner{name: "B"}, &hw)
 
 	if sa, err := a.Sign("m"); err != nil || sa != "SIG_A:m" {
 		t.Fatalf("socket A signed as %q, %v; want SIG_A:m", sa, err)
@@ -98,7 +100,7 @@ func TestAgentSlotBindingIsSocketNotClient(t *testing.T) {
 
 func TestAgentSerialisesHardwareAccess(t *testing.T) {
 	var hw sync.Mutex
-	stub := &agentStubSigner{name: "A"}
+	stub := &stubSigner{name: "A"}
 	client := startAgent(t, stub, &hw)
 
 	var wg sync.WaitGroup
@@ -122,20 +124,20 @@ func TestAgentSerialisesHardwareAccess(t *testing.T) {
 
 func TestAgentEmptyMessageAndSignerErrorFailClosed(t *testing.T) {
 	var hw sync.Mutex
-	client := startAgent(t, &agentStubSigner{name: "A"}, &hw)
+	client := startAgent(t, &stubSigner{name: "A"}, &hw)
 	if _, err := client.Sign(""); err == nil {
 		t.Fatal("Sign with empty message should error")
 	}
 
 	var hw2 sync.Mutex
-	failing := startAgent(t, &agentStubSigner{name: "A", signErr: fmt.Errorf("hardware unavailable")}, &hw2)
+	failing := startAgent(t, &stubSigner{name: "A", signErr: fmt.Errorf("hardware unavailable")}, &hw2)
 	if _, err := failing.Sign("m"); err == nil {
 		t.Fatal("a signer error must propagate to the client, not be swallowed")
 	}
 }
 
 func TestAgentDialErrorOnMissingSocket(t *testing.T) {
-	client := newAgentSigner("/tmp/signet-test-does-not-exist.sock")
+	client := NewClient("/tmp/signet-test-does-not-exist.sock")
 	if _, err := client.Sign("m"); err == nil {
 		t.Fatal("Sign against a missing socket should error")
 	}

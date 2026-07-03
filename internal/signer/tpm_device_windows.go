@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package signer
 
 import (
 	"github.com/google/go-tpm/tpm2/transport"

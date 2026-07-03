@@ -1,4 +1,4 @@
-// signer_tpm.go: TPM 2.0 backend for signet.
+// tpm.go: TPM 2.0 backend for signet.
 //
 // Uses the google/go-tpm tpm2 package (pure Go). Creates and persists an
 // ECDSA P-256 signing key at fixed persistent handle 0x81010001 (in the
@@ -9,7 +9,7 @@
 //   - Linux:   /dev/tpmrm0 (resource manager) or /dev/tpm0 (fallback)
 //   - Windows: TBS (Trusted Platform Module Base Services)
 //   - Other:   no device known; backend unavailable (auto-detect falls through)
-package main
+package signer
 
 import (
 	"crypto/sha256"

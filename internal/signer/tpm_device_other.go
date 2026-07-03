@@ -1,6 +1,6 @@
 //go:build !linux && !windows && !darwin
 
-package main
+package signer
 
 import (
 	"github.com/google/go-tpm/tpm2/transport"

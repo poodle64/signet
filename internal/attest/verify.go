@@ -1,20 +1,10 @@
 // verify.go: 'signet verify' — consumer pre-flight with typed exit codes.
 //
-// signet verify performs the attestation round-trip (and, optionally, a
-// scoped credential vend) against a broker, then exits with a typed code so
+// Verify performs the attestation round-trip (and, optionally, a scoped
+// credential vend) against a broker, then returns a typed exit code so
 // callers can branch on the exact failure mode rather than treating every
 // problem as a single opaque "unauthorised".
-//
-// Exit codes:
-//
-//	0  success — attestation accepted; credential resolvable (if --credential given)
-//	2  key missing — no key enrolled for this identity
-//	3  attestation rejected — broker refused the attestation (HTTP 401/4xx)
-//	4  credential out of scope — broker accepted the attestation but the named
-//	   credential is not in this identity's vend scope (HTTP 403)
-//	5  credential not found — broker accepted the attestation but the named
-//	   credential does not exist in the catalogue (HTTP 404)
-package main
+package attest
 
 import (
 	"errors"
@@ -22,6 +12,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/poodle64/signet/internal/signer"
 )
 
 // Typed exit codes for signet verify. Each maps to a distinct failure mode so
@@ -64,7 +56,7 @@ func brokerGet(endpoint, bearerKey string) (int, []byte, error) {
 	return resp.StatusCode, body, nil
 }
 
-// cmdVerify performs the consumer pre-flight check. It:
+// Verify performs the consumer pre-flight check. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
 //  2. Runs the attestation round-trip via attestFresh.
 //  3. If credName is non-empty, probes GET /v1/credentials/{credName} with the
@@ -74,11 +66,11 @@ func brokerGet(endpoint, bearerKey string) (int, []byte, error) {
 // error with a non-zero code means the check was conclusive (the summary line
 // was printed) and the caller should exit with that code. A non-nil error with
 // exit code 1 is an unexpected transport or argument failure.
-func cmdVerify(signer Signer, brokerURL, credName string) (exitCode int, err error) {
+func Verify(s signer.Signer, brokerURL, credName string) (exitCode int, err error) {
 	fmt.Printf("signet verify — broker: %s\n\n", brokerURL)
 
 	// Step 1: confirm a key is enrolled.
-	_, keyErr := signer.PublicKeyDER()
+	_, keyErr := s.PublicKeyDER()
 	if keyErr != nil {
 		fmt.Printf("  key              FAIL           no key enrolled: %v\n", keyErr)
 		return ExitVerifyKeyMissing, nil
@@ -86,13 +78,12 @@ func cmdVerify(signer Signer, brokerURL, credName string) (exitCode int, err err
 	fmt.Printf("  key              OK             key present\n")
 
 	// Step 2: attestation round-trip.
-	bc, attestErr := attestFresh(signer, brokerURL)
+	bc, attestErr := attestFresh(s, brokerURL)
 	if attestErr != nil {
-		// Distinguish a broker rejection from a transport error.
-		// attestFresh wraps errUnauthorized from brokerPost, and non-2xx as
-		// "broker <status>: <body>". Either signals a rejection; a network
-		// error is a different class.
-		if errors.Is(attestErr, errUnauthorized) || isAttestRejection(attestErr) {
+		// Distinguish a broker rejection (a non-2xx HTTP response, carried as a
+		// *BrokerError anywhere in the wrap chain) from a transport error.
+		var be *BrokerError
+		if errors.As(attestErr, &be) {
 			fmt.Printf("  attest           FAIL           broker rejected attestation: %v\n", attestErr)
 			return ExitVerifyAttestRejected, nil
 		}
@@ -130,13 +121,4 @@ func cmdVerify(signer Signer, brokerURL, credName string) (exitCode int, err err
 		fmt.Printf("  credential %-16s FAIL           unexpected broker %d: %s\n", credName, status, detail)
 		return 1, fmt.Errorf("unexpected broker %d on credential vend", status)
 	}
-}
-
-// isAttestRejection reports whether err looks like a broker-side rejection
-// from attestFresh (i.e. a non-2xx HTTP response, wrapped as "broker <N>: …").
-// This avoids importing a typed error for attest rejection; the "broker " prefix
-// is the one stable shape that brokerPost emits for non-2xx responses.
-func isAttestRejection(err error) bool {
-	return strings.HasPrefix(err.Error(), "attest/challenge: broker ") ||
-		strings.HasPrefix(err.Error(), "attest/token: broker ")
 }

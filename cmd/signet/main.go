@@ -26,6 +26,7 @@
 //	signet sign    [flags] <message>
 //	signet auth    [flags] <broker-url>
 //	signet verify  [flags] --broker <url> [--credential <name>]
+//	signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 //	signet version
 //	signet doctor  [flags]
 //
@@ -34,6 +35,8 @@
 //	--backend   secure-enclave | tpm | piv   (default: auto-detect for the platform)
 //	--slot      9a | 9c | 9d | 9e | 82..95   (piv backend only; default: 9c)
 //	--identity  <name>                       (secure-enclave backend only; default: consumer)
+//	--agent     <socket>                     (sign via a signet agent socket, not local hardware)
+//	--user-presence                          (enrol only; require Touch ID per signature)
 //
 // --identity names the local Secure-Enclave key blob, the way an SSH key
 // filename picks one key of several, so one Mac can hold more than one identity.
@@ -47,6 +50,11 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
+
+	"github.com/poodle64/signet/internal/agent"
+	"github.com/poodle64/signet/internal/attest"
+	"github.com/poodle64/signet/internal/signer"
 )
 
 // version is overwritten at link time by -ldflags "-X main.version=<value>".
@@ -64,12 +72,12 @@ func main() {
 	}
 }
 
-// runVerify parses verify's flags and calls cmdVerify, returning the typed
+// runVerify parses verify's flags and calls attest.Verify, returning the typed
 // exit code. It is separate from run() so typed exits never conflict with
 // run()'s single error/exit-1 contract.
 func runVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
-	backend, slot, identity, agent := signerFlags(fs)
+	backend, slot, identity, agentSock := signerFlags(fs)
 	broker := fs.String("broker", "", "broker URL (required)")
 	cred := fs.String("credential", "", "credential name to probe (optional)")
 	if err := fs.Parse(args); err != nil {
@@ -80,12 +88,12 @@ func runVerify(args []string) int {
 		fmt.Fprintln(os.Stderr, "error: --broker is required")
 		return 1
 	}
-	signer, err := selectSigner(*backend, *slot, *identity, *agent)
+	s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	code, err := cmdVerify(signer, *broker, *cred)
+	code, err := attest.Verify(s, *broker, *cred)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 	}
@@ -94,11 +102,11 @@ func runVerify(args []string) int {
 
 // signerFlags registers the backend/slot/identity/agent selection flags shared by
 // every signing subcommand on fs and returns pointers to their parsed values.
-func signerFlags(fs *flag.FlagSet) (backend, slot, identity, agent *string) {
+func signerFlags(fs *flag.FlagSet) (backend, slot, identity, agentSock *string) {
 	backend = fs.String("backend", "", "hardware backend: secure-enclave | tpm | piv (default: auto-detect)")
 	slot = fs.String("slot", "", "PIV slot: 9a | 9c | 9d | 9e | 82..95 (piv backend only; default: 9c)")
 	identity = fs.String("identity", "", "Secure-Enclave key name (secure-enclave backend only; default: consumer)")
-	agent = fs.String("agent", "", "path to a signet agent socket; sign/get the public key via the agent instead of local hardware")
+	agentSock = fs.String("agent", "", "path to a signet agent socket; sign/get the public key via the agent instead of local hardware")
 	return
 }
 
@@ -106,11 +114,21 @@ func signerFlags(fs *flag.FlagSet) (backend, slot, identity, agent *string) {
 // signing is forwarded to the agent socket (the backend/slot/identity flags are
 // the agent's concern, not the client's); otherwise a local hardware signer is
 // built per the backend/slot/identity selection.
-func selectSigner(backend, slot, identity, agent string) (Signer, error) {
-	if agent != "" {
-		return newAgentSigner(agent), nil
+func selectSigner(backend, slot, identity, agentSock string) (signer.Signer, error) {
+	if agentSock != "" {
+		return agent.NewClient(agentSock), nil
 	}
-	return newSigner(backend, slot, identity)
+	return signer.New(backend, slot, identity)
+}
+
+// bindList collects repeatable --bind <socket>=<slot> values.
+type bindList []string
+
+func (b *bindList) String() string { return strings.Join(*b, ",") }
+
+func (b *bindList) Set(v string) error {
+	*b = append(*b, v)
+	return nil
 }
 
 func run(args []string) error {
@@ -122,16 +140,16 @@ func run(args []string) error {
 	switch args[0] {
 	case "enrol":
 		fs := flag.NewFlagSet("enrol", flag.ContinueOnError)
-		backend, slot, identity, agent := signerFlags(fs)
+		backend, slot, identity, agentSock := signerFlags(fs)
 		userPresence := fs.Bool("user-presence", false, "require Touch ID per signature (secure-enclave backend)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		signer, err := selectSigner(*backend, *slot, *identity, *agent)
+		s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 		if err != nil {
 			return err
 		}
-		spki, err := signer.Enrol(*userPresence)
+		spki, err := s.Enrol(*userPresence)
 		if err != nil {
 			return err
 		}
@@ -140,18 +158,18 @@ func run(args []string) error {
 
 	case "sign":
 		fs := flag.NewFlagSet("sign", flag.ContinueOnError)
-		backend, slot, identity, agent := signerFlags(fs)
+		backend, slot, identity, agentSock := signerFlags(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() < 1 {
 			return fmt.Errorf("usage: signet sign [flags] <message>")
 		}
-		signer, err := selectSigner(*backend, *slot, *identity, *agent)
+		s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 		if err != nil {
 			return err
 		}
-		sig, err := signer.Sign(fs.Arg(0))
+		sig, err := s.Sign(fs.Arg(0))
 		if err != nil {
 			return err
 		}
@@ -160,18 +178,18 @@ func run(args []string) error {
 
 	case "auth":
 		fs := flag.NewFlagSet("auth", flag.ContinueOnError)
-		backend, slot, identity, agent := signerFlags(fs)
+		backend, slot, identity, agentSock := signerFlags(fs)
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if fs.NArg() < 1 {
 			return fmt.Errorf("usage: signet auth [flags] <broker-url>")
 		}
-		signer, err := selectSigner(*backend, *slot, *identity, *agent)
+		s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 		if err != nil {
 			return err
 		}
-		return cmdAuth(signer, fs.Arg(0))
+		return attest.Auth(s, fs.Arg(0))
 
 	case "agent":
 		fs := flag.NewFlagSet("agent", flag.ContinueOnError)
@@ -181,7 +199,7 @@ func run(args []string) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		return cmdAgent(*backend, binds)
+		return agent.Run(*backend, binds)
 
 	case "version":
 		fmt.Printf("signet %s %s/%s (go %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
@@ -208,7 +226,7 @@ func run(args []string) error {
 	}
 }
 
-// printHelp writes the help block to stdout and exits 0.
+// printHelp writes the help block to stdout.
 func printHelp() {
 	fmt.Print(helpText())
 }

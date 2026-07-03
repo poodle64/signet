@@ -1,20 +1,25 @@
 //go:build !darwin
 
-// signer_enclave_other.go: non-darwin stub for the Secure Enclave backend.
+// enclave_stub.go: non-darwin stub for the Secure Enclave backend.
 //
-// The real Secure Enclave signer (signer_darwin.go) links a CryptoKit Swift shim
-// via cgo and exists only on macOS. signer.go's backend switch references
+// The real Secure Enclave signer (enclave_darwin.go) links a CryptoKit Swift
+// shim via cgo and exists only on macOS. New's backend switch references
 // newEnclaveSigner unconditionally, so every target platform must provide the
-// symbol to compile. Off darwin we supply a stub: autoDetectBackend never selects
+// symbol to compile. Off darwin we supply a stub: autoDetect never selects
 // secure-enclave on a non-darwin host (it picks tpm or piv), so this path is
-// reached only when --backend is explicitly forced to secure-enclave there — in
-// which case it fails at use with a clear message rather than failing the build
-// for every Linux/Windows consumer. The identity argument is ignored.
-package main
+// reached only when the backend is explicitly forced to secure-enclave there —
+// in which case it fails at use with a clear message rather than failing the
+// build for every Linux/Windows consumer. The identity argument is ignored.
+package signer
 
 import "fmt"
 
 func newEnclaveSigner(_ string) Signer { return enclaveUnavailable{} }
+
+// probeEnclave is the doctor probe for the Secure Enclave backend.
+func probeEnclave() (bool, string) {
+	return false, "macOS only"
+}
 
 type enclaveUnavailable struct{}
 

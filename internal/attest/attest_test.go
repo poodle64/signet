@@ -1,6 +1,6 @@
 // attest_test.go: tests for the broker attestation flow and bearer cache.
 // Uses net/http/httptest for a fake broker; no real network or hardware required.
-package main
+package attest
 
 import (
 	"encoding/json"
@@ -144,15 +144,15 @@ func mustFingerprint(t *testing.T, spkiB64 string) string {
 	return fp
 }
 
-// TestCmdAuth_ColdCache verifies a fresh attestation when no cache exists.
-func TestCmdAuth_ColdCache(t *testing.T) {
+// TestAuth_ColdCache verifies a fresh attestation when no cache exists.
+func TestAuth_ColdCache(t *testing.T) {
 	setTempHome(t)
 	srv := fakeBroker(t, 2*time.Hour, false)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL); err != nil {
-		t.Fatalf("cmdAuth: %v", err)
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	if err := Auth(s, srv.URL); err != nil {
+		t.Fatalf("Auth: %v", err)
 	}
 
 	// Cache should now exist on disk, keyed by fingerprint.
@@ -166,9 +166,9 @@ func TestCmdAuth_ColdCache(t *testing.T) {
 	}
 }
 
-// TestCmdAuth_WarmCache verifies that a healthy cached bearer is reused without
+// TestAuth_WarmCache verifies that a healthy cached bearer is reused without
 // calling the broker.
-func TestCmdAuth_WarmCache(t *testing.T) {
+func TestAuth_WarmCache(t *testing.T) {
 	setTempHome(t)
 
 	// Write a warm cache (TTL > 30 min), keyed by the stub's key fingerprint.
@@ -191,18 +191,18 @@ func TestCmdAuth_WarmCache(t *testing.T) {
 		t.Fatalf("saveCache: %v", err)
 	}
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL); err != nil {
-		t.Fatalf("cmdAuth: %v", err)
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	if err := Auth(s, srv.URL); err != nil {
+		t.Fatalf("Auth: %v", err)
 	}
 	if callCount > 0 {
 		t.Errorf("broker was called %d times, expected 0 for warm cache", callCount)
 	}
 }
 
-// TestCmdAuth_NearExpiry verifies that a near-expiry cache triggers a renew,
+// TestAuth_NearExpiry verifies that a near-expiry cache triggers a renew,
 // the renewed key is cached, and the renewed key is emitted.
-func TestCmdAuth_NearExpiry(t *testing.T) {
+func TestAuth_NearExpiry(t *testing.T) {
 	setTempHome(t)
 
 	fp := mustFingerprint(t, stubSPKI)
@@ -220,9 +220,9 @@ func TestCmdAuth_NearExpiry(t *testing.T) {
 		t.Fatalf("saveCache: %v", err)
 	}
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL); err != nil {
-		t.Fatalf("cmdAuth: %v", err)
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	if err := Auth(s, srv.URL); err != nil {
+		t.Fatalf("Auth: %v", err)
 	}
 
 	updated := loadCache(srv.URL, fp)
@@ -234,9 +234,9 @@ func TestCmdAuth_NearExpiry(t *testing.T) {
 	}
 }
 
-// TestCmdAuth_Renew401_ReAttests verifies that a 401 from /renew causes a
+// TestAuth_Renew401_ReAttests verifies that a 401 from /renew causes a
 // full re-attestation (challenge+token), not a failure.
-func TestCmdAuth_Renew401_ReAttests(t *testing.T) {
+func TestAuth_Renew401_ReAttests(t *testing.T) {
 	setTempHome(t)
 
 	fp := mustFingerprint(t, stubSPKI)
@@ -255,9 +255,9 @@ func TestCmdAuth_Renew401_ReAttests(t *testing.T) {
 		t.Fatalf("saveCache: %v", err)
 	}
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	if err := cmdAuth(signer, srv.URL); err != nil {
-		t.Fatalf("cmdAuth: %v", err)
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	if err := Auth(s, srv.URL); err != nil {
+		t.Fatalf("Auth: %v", err)
 	}
 
 	// After re-attest, cache should carry the fresh key from /token.
@@ -437,5 +437,46 @@ func TestLoadCache_CorruptFile(t *testing.T) {
 	var bc bearerCache
 	if err := json.Unmarshal([]byte("not json"), &bc); err == nil {
 		t.Error("expected json.Unmarshal to fail on corrupt input")
+	}
+}
+
+// TestCanonicalMessage verifies the signed-message construction matches
+// the broker's canonical_message(challenge_id, nonce) in attestation.py:
+// UTF-8 of "{challenge_id}.{nonce}".
+func TestCanonicalMessage(t *testing.T) {
+	cases := []struct {
+		challengeID string
+		nonce       string
+		want        string
+	}{
+		{"abc123", "xyz789", "abc123.xyz789"},
+		{"ch-00000000-0000-0000-0000-000000000001", "nonce-val", "ch-00000000-0000-0000-0000-000000000001.nonce-val"},
+		{"a", "b", "a.b"},
+		{"", "n", ".n"},
+	}
+	for _, tc := range cases {
+		got := canonicalMessage(tc.challengeID, tc.nonce)
+		if got != tc.want {
+			t.Errorf("canonicalMessage(%q, %q) = %q; want %q", tc.challengeID, tc.nonce, got, tc.want)
+		}
+	}
+}
+
+// TestSanitiseHost verifies the cache filename sanitisation for broker URLs.
+func TestSanitiseHost(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"http://localhost:8311", "http_localhost_8311"},
+		{"https://portcullis.example.internal", "https_portcullis.example.internal"},
+		{"https://portcullis.example.internal/", "https_portcullis.example.internal_"},
+		{"https://portcullis.example.internal:8443/api", "https_portcullis.example.internal_8443_api"},
+	}
+	for _, tc := range cases {
+		got := sanitiseHost(tc.input)
+		if got != tc.want {
+			t.Errorf("sanitiseHost(%q) = %q; want %q", tc.input, got, tc.want)
+		}
 	}
 }

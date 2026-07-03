@@ -1,6 +1,6 @@
-// signer_test.go: tests for backend selection in newSigner and autoDetectBackend.
+// signer_test.go: tests for backend selection in New and autoDetect.
 // No hardware required; backend construction is tested without calling Enrol/Sign.
-package main
+package signer
 
 import (
 	"runtime"
@@ -8,58 +8,58 @@ import (
 	"testing"
 )
 
-// TestNewSigner_BackendOverride_TPM verifies the tpm name returns a *tpmSigner.
-func TestNewSigner_BackendOverride_TPM(t *testing.T) {
-	s, err := newSigner("tpm", "", "")
+// TestNew_BackendOverride_TPM verifies the tpm name returns a *tpmSigner.
+func TestNew_BackendOverride_TPM(t *testing.T) {
+	s, err := New("tpm", "", "")
 	if err != nil {
-		t.Fatalf("newSigner(tpm): %v", err)
+		t.Fatalf("New(tpm): %v", err)
 	}
 	if _, ok := s.(*tpmSigner); !ok {
-		t.Errorf("newSigner(tpm) type = %T, want *tpmSigner", s)
+		t.Errorf("New(tpm) type = %T, want *tpmSigner", s)
 	}
 }
 
-// TestNewSigner_BackendOverride_PIV verifies the piv name returns a *pivSigner
+// TestNew_BackendOverride_PIV verifies the piv name returns a *pivSigner
 // (slot construction only; no hardware touched).
-func TestNewSigner_BackendOverride_PIV(t *testing.T) {
-	s, err := newSigner("piv", "", "")
+func TestNew_BackendOverride_PIV(t *testing.T) {
+	s, err := New("piv", "", "")
 	if err != nil {
-		t.Fatalf("newSigner(piv): %v", err)
+		t.Fatalf("New(piv): %v", err)
 	}
 	if _, ok := s.(*pivSigner); !ok {
-		t.Errorf("newSigner(piv) type = %T, want *pivSigner", s)
+		t.Errorf("New(piv) type = %T, want *pivSigner", s)
 	}
 }
 
-// TestNewSigner_BackendOverride_SE verifies the SE aliases on darwin.
-func TestNewSigner_BackendOverride_SE(t *testing.T) {
+// TestNew_BackendOverride_SE verifies the SE aliases on darwin.
+func TestNew_BackendOverride_SE(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skipf("SE backend only available on darwin (GOOS=%s)", runtime.GOOS)
 	}
 	for _, alias := range []string{"secure-enclave", "enclave", "se"} {
 		alias := alias
 		t.Run(alias, func(t *testing.T) {
-			s, err := newSigner(alias, "", "")
+			s, err := New(alias, "", "")
 			if err != nil {
-				t.Fatalf("newSigner(%q): %v", alias, err)
+				t.Fatalf("New(%q): %v", alias, err)
 			}
 			if _, ok := s.(*enclaveSigner); !ok {
-				t.Errorf("newSigner(%q) type = %T, want *enclaveSigner", alias, s)
+				t.Errorf("New(%q) type = %T, want *enclaveSigner", alias, s)
 			}
 		})
 	}
 }
 
-// TestNewSigner_UnknownBackend verifies an unknown backend returns an error that
+// TestNew_UnknownBackend verifies an unknown backend returns an error that
 // names the unknown value and the valid options. An empty backend is not tested
 // here: it triggers auto-detect, not an error.
-func TestNewSigner_UnknownBackend(t *testing.T) {
+func TestNew_UnknownBackend(t *testing.T) {
 	for _, tc := range []string{"unknown-backend", "INVALID", "tpm2"} {
 		tc := tc
 		t.Run(tc, func(t *testing.T) {
-			_, err := newSigner(tc, "", "")
+			_, err := New(tc, "", "")
 			if err == nil {
-				t.Fatalf("newSigner(%q): expected error, got nil", tc)
+				t.Fatalf("New(%q): expected error, got nil", tc)
 			}
 			if !strings.Contains(err.Error(), tc) {
 				t.Errorf("error %q does not mention the unknown backend %q", err, tc)
@@ -76,19 +76,19 @@ func TestNewSigner_UnknownBackend(t *testing.T) {
 // On linux/windows: must return "tpm" or "piv" (TPM availability is not guaranteed).
 // Other platforms: must return "piv".
 func TestAutoDetectBackend_GOOS(t *testing.T) {
-	got := autoDetectBackend()
+	got := autoDetect()
 	switch runtime.GOOS {
 	case "darwin":
 		if got != "secure-enclave" {
-			t.Errorf("autoDetectBackend on darwin = %q, want %q", got, "secure-enclave")
+			t.Errorf("autoDetect on darwin = %q, want %q", got, "secure-enclave")
 		}
 	case "linux", "windows":
 		if got != "tpm" && got != "piv" {
-			t.Errorf("autoDetectBackend on %s = %q, want tpm or piv", runtime.GOOS, got)
+			t.Errorf("autoDetect on %s = %q, want tpm or piv", runtime.GOOS, got)
 		}
 	default:
 		if got != "piv" {
-			t.Errorf("autoDetectBackend on %s = %q, want %q", runtime.GOOS, got, "piv")
+			t.Errorf("autoDetect on %s = %q, want %q", runtime.GOOS, got, "piv")
 		}
 	}
 }

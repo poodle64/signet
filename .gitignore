@@ -84,8 +84,8 @@ logs/
 /signet.exe
 
 # Swift Secure-Enclave shim build output (compiled into the binary by `make build`)
-/se_swift.o
-/libsignet_se.a
+/internal/signer/enclave.o
+/internal/signer/libsignet_se.a
 
 # Internal product docs — maintainer record of intent and rationale, kept out of
 # the published (public) repo. The outward-facing "why" lives in README.md.

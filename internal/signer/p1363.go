@@ -1,5 +1,5 @@
-// sig_common.go: shared wire-format utilities used by multiple backends.
-package main
+// p1363.go: shared ECDSA wire-format utilities used by multiple backends.
+package signer
 
 import (
 	"encoding/asn1"

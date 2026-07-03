@@ -1,11 +1,12 @@
 //go:build tpmsimulator
 
-// signer_tpm_test.go: TPM backend tests using the go-tpm software simulator.
+// tpm_simulator_test.go: TPM backend tests using the go-tpm software simulator.
 // Run with: go test -tags tpmsimulator ./...
 //
-// The go-tpm-tools simulator has a cgo/OpenSSL dependency (ms-tpm-20-ref).
-// The tpmsimulator build tag keeps that dep out of normal builds.
-package main
+// The go-tpm software simulator (github.com/google/go-tpm/tpm2/transport/simulator)
+// has a cgo/OpenSSL dependency (ms-tpm-20-ref). The tpmsimulator build tag keeps
+// that dep out of normal builds.
+package signer
 
 import (
 	"crypto/ecdsa"

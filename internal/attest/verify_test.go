@@ -1,6 +1,6 @@
 // verify_test.go: tests for the 'signet verify' consumer pre-flight.
 // All five typed exit codes are exercised; no real hardware or network required.
-package main
+package attest
 
 import (
 	"encoding/json"
@@ -84,86 +84,86 @@ func rejectingBroker(t *testing.T, challengeStatus int) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// TestCmdVerify_Success verifies exit code 0 when attestation succeeds without
+// TestVerify_Success verifies exit code 0 when attestation succeeds without
 // a credential probe.
-func TestCmdVerify_Success(t *testing.T) {
+func TestVerify_Success(t *testing.T) {
 	setTempHome(t)
 	mux := http.NewServeMux()
 	addAttestHandlers(t, mux)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := cmdVerify(signer, srv.URL, "")
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	code, err := Verify(s, srv.URL, "")
 	if err != nil {
-		t.Fatalf("cmdVerify: %v", err)
+		t.Fatalf("Verify: %v", err)
 	}
 	if code != ExitVerifyOK {
 		t.Errorf("exit code = %d, want %d (ExitVerifyOK)", code, ExitVerifyOK)
 	}
 }
 
-// TestCmdVerify_KeyMissing verifies exit code 2 when PublicKeyDER fails (key
+// TestVerify_KeyMissing verifies exit code 2 when PublicKeyDER fails (key
 // not enrolled). The broker must not be contacted at all.
-func TestCmdVerify_KeyMissing(t *testing.T) {
+func TestVerify_KeyMissing(t *testing.T) {
 	setTempHome(t)
-	signer := &stubSigner{pubKeyErr: errors.New("key blob not found")}
+	s := &stubSigner{pubKeyErr: errors.New("key blob not found")}
 	// Use an unreachable URL; any attempt to dial it would produce a transport
 	// error that would appear as exit code 1, catching a regression.
-	code, err := cmdVerify(signer, "http://127.0.0.1:0", "")
+	code, err := Verify(s, "http://127.0.0.1:0", "")
 	if err != nil {
-		t.Fatalf("cmdVerify: unexpected non-nil error for typed exit: %v", err)
+		t.Fatalf("Verify: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVerifyKeyMissing {
 		t.Errorf("exit code = %d, want %d (ExitVerifyKeyMissing)", code, ExitVerifyKeyMissing)
 	}
 }
 
-// TestCmdVerify_AttestRejected verifies exit code 3 when the broker returns 401
+// TestVerify_AttestRejected verifies exit code 3 when the broker returns 401
 // on the attestation challenge (resolves to a broker-rejection, not transport).
-func TestCmdVerify_AttestRejected(t *testing.T) {
+func TestVerify_AttestRejected(t *testing.T) {
 	setTempHome(t)
 	srv := rejectingBroker(t, http.StatusUnauthorized)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := cmdVerify(signer, srv.URL, "")
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	code, err := Verify(s, srv.URL, "")
 	if err != nil {
-		t.Fatalf("cmdVerify: unexpected non-nil error for typed exit: %v", err)
+		t.Fatalf("Verify: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVerifyAttestRejected {
 		t.Errorf("exit code = %d, want %d (ExitVerifyAttestRejected)", code, ExitVerifyAttestRejected)
 	}
 }
 
-// TestCmdVerify_CredOutOfScope verifies exit code 4 when the broker returns 403
+// TestVerify_CredOutOfScope verifies exit code 4 when the broker returns 403
 // on the credential vend endpoint.
-func TestCmdVerify_CredOutOfScope(t *testing.T) {
+func TestVerify_CredOutOfScope(t *testing.T) {
 	setTempHome(t)
 	srv := verifyBrokerWithCred(t, http.StatusForbidden)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := cmdVerify(signer, srv.URL, "my-cred")
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	code, err := Verify(s, srv.URL, "my-cred")
 	if err != nil {
-		t.Fatalf("cmdVerify: unexpected non-nil error for typed exit: %v", err)
+		t.Fatalf("Verify: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVerifyCredOutOfScope {
 		t.Errorf("exit code = %d, want %d (ExitVerifyCredOutOfScope)", code, ExitVerifyCredOutOfScope)
 	}
 }
 
-// TestCmdVerify_CredNotFound verifies exit code 5 when the broker returns 404
+// TestVerify_CredNotFound verifies exit code 5 when the broker returns 404
 // on the credential vend endpoint.
-func TestCmdVerify_CredNotFound(t *testing.T) {
+func TestVerify_CredNotFound(t *testing.T) {
 	setTempHome(t)
 	srv := verifyBrokerWithCred(t, http.StatusNotFound)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := cmdVerify(signer, srv.URL, "nonexistent-cred")
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	code, err := Verify(s, srv.URL, "nonexistent-cred")
 	if err != nil {
-		t.Fatalf("cmdVerify: unexpected non-nil error for typed exit: %v", err)
+		t.Fatalf("Verify: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVerifyCredNotFound {
 		t.Errorf("exit code = %d, want %d (ExitVerifyCredNotFound)", code, ExitVerifyCredNotFound)
@@ -171,7 +171,7 @@ func TestCmdVerify_CredNotFound(t *testing.T) {
 }
 
 // captureVerifyStdout runs f with os.Stdout redirected to a pipe and returns
-// everything written to stdout. cmdVerify writes via fmt.Printf, so this is the
+// everything written to stdout. Verify writes via fmt.Printf, so this is the
 // only way to assert on its human-readable output.
 func captureVerifyStdout(t *testing.T, f func()) string {
 	t.Helper()
@@ -191,10 +191,10 @@ func captureVerifyStdout(t *testing.T, f func()) string {
 	return string(out)
 }
 
-// TestCmdVerify_NoSecretInOutput asserts that neither the minted bearer key nor
+// TestVerify_NoSecretInOutput asserts that neither the minted bearer key nor
 // a credential value from the vend response is ever printed — verify is a
 // diagnostic, and a secret in its output would be a leak (#4 acceptance).
-func TestCmdVerify_NoSecretInOutput(t *testing.T) {
+func TestVerify_NoSecretInOutput(t *testing.T) {
 	setTempHome(t)
 	mux := http.NewServeMux()
 	addAttestHandlers(t, mux)
@@ -207,11 +207,11 @@ func TestCmdVerify_NoSecretInOutput(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
 	out := captureVerifyStdout(t, func() {
-		code, err := cmdVerify(signer, srv.URL, "my-cred")
+		code, err := Verify(s, srv.URL, "my-cred")
 		if err != nil || code != ExitVerifyOK {
-			t.Errorf("cmdVerify = (%d, %v), want (%d, nil)", code, err, ExitVerifyOK)
+			t.Errorf("Verify = (%d, %v), want (%d, nil)", code, err, ExitVerifyOK)
 		}
 	})
 	if strings.Contains(out, "SUPERSECRETTOKENVALUE") {
@@ -223,17 +223,17 @@ func TestCmdVerify_NoSecretInOutput(t *testing.T) {
 	}
 }
 
-// TestCmdVerify_CredSuccess verifies exit code 0 when attestation succeeds and
+// TestVerify_CredSuccess verifies exit code 0 when attestation succeeds and
 // the credential vend endpoint returns 200.
-func TestCmdVerify_CredSuccess(t *testing.T) {
+func TestVerify_CredSuccess(t *testing.T) {
 	setTempHome(t)
 	srv := verifyBrokerWithCred(t, http.StatusOK)
 	defer srv.Close()
 
-	signer := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := cmdVerify(signer, srv.URL, "my-cred")
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	code, err := Verify(s, srv.URL, "my-cred")
 	if err != nil {
-		t.Fatalf("cmdVerify: unexpected non-nil error for typed exit: %v", err)
+		t.Fatalf("Verify: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVerifyOK {
 		t.Errorf("exit code = %d, want %d (ExitVerifyOK)", code, ExitVerifyOK)
