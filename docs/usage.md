@@ -21,13 +21,16 @@ For per-subcommand flags, on-disk paths, and backend selection see [configuratio
 ## Commands
 
 ```text
-signet enrol [--backend <backend>] [--identity <name>] [--user-presence]
-signet sign [--backend <backend>] [--identity <name>] <message>
-signet auth [--backend <backend>] [--identity <name>] <broker-url>
-signet agent --bind <socket>=<slot> [--bind ...] [--backend piv]
+signet enrol   [--backend <backend>] [--identity <name>] [--user-presence]
+signet sign    [--backend <backend>] [--identity <name>] <message>
+signet auth    [--backend <backend>] [--identity <name>] <broker-url>
+signet verify  --broker <url> [--credential <name>] [--backend <backend>] [--identity <name>]
+signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
+signet doctor  [--backend <backend>]
+signet version
 ```
 
-`enrol`, `sign`, and `auth` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
+`enrol`, `sign`, `auth`, `verify`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
 
 ### enrol
 
@@ -61,7 +64,7 @@ The broker resolves the calling consumer by its enrolled public key (the SSH `au
 
 The canonical message signed is `{challenge_id}.{nonce}`; signet speaks only the Portcullis `/v1/attest/{challenge,token,renew}` HTTP contract.
 
-Re-runs reuse the cache and renew the bearer as it ages: a cached token still more than 30 minutes from expiry is reused as-is; within 30 minutes of expiry signet renews it; a `401` on renew (or a token past its maximum lifetime) triggers a fresh attestation. The cache is keyed by broker URL and identity, so one machine can hold separate bearers for several brokers or identities without collision.
+Re-runs reuse the cache and renew the bearer as it ages: a cached token still more than 30 minutes from expiry is reused as-is; within 30 minutes of expiry signet renews it; a `401` on renew (or a token past its maximum lifetime) triggers a fresh attestation. The cache is keyed by broker URL and the enrolled public key's fingerprint (the first 16 hex characters of SHA-256 over the SPKI DER public key), so re-enrolling a new key for the same broker never serves a stale bearer minted for the old key.
 
 ### agent
 
@@ -79,7 +82,7 @@ A client reaches the agent with `--agent <socket>` on `sign`, `enrol`, or `auth`
 signet auth --agent /run/signet/browser-driver.sock https://portcullis.example.internal
 ```
 
-`--agent` swaps the local-hardware signer for one that forwards over the socket; nothing else changes, and the broker — which resolves identity by public key — neither knows nor cares that the signature came via the agent. The consuming side (e.g. the `mcp-common` signer) selects agent mode through `SIGNET_AGENT_SOCKET`.
+`--agent` swaps the local-hardware signer for one that forwards over the socket; nothing else changes, and the broker — which resolves identity by public key — neither knows nor cares that the signature came via the agent. The consuming side (e.g. the `mcp-common` Python signer) has its own `SIGNET_AGENT_SOCKET` environment variable that tells it which socket path to pass to signet via `--agent`; that variable belongs to the consumer, not to signet itself.
 
 ## Wiring signet as a credential helper
 
@@ -100,3 +103,86 @@ For a Claude Code MCP `http` server, wire `auth` as the `headersHelper`. The bac
 ```
 
 The bearer refreshes at each (re)connect: Claude Code re-runs the helper, and signet serves the cached bearer (renewing or re-attesting as needed). The same pattern works for any consumer that can shell out for an `Authorization` header; the MCP `headersHelper` is one instance of the general credential-helper contract, not a signet-specific feature.
+
+### verify
+
+```text
+signet verify --broker <url> [--credential <name>] [--backend <backend>] [--identity <name>] [--agent <socket>]
+```
+
+`verify` is the consumer pre-flight command. It runs the full attestation round-trip against the broker and, if `--credential` is supplied, probes whether the enrolled identity has vend scope for that credential. It is designed to be called from a health check, a CI gate, or a deployment script to confirm the machine is correctly enrolled before doing real work.
+
+`verify` prints a short diagnostic table to stdout and exits with a typed exit code:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success: attestation accepted; credential resolvable (if `--credential` given). |
+| `1` | Unexpected transport or argument error. |
+| `2` | Key missing: no key enrolled for this identity and backend. |
+| `3` | Attestation rejected: the broker refused the attestation (4xx). |
+| `4` | Credential out of scope: the identity is attested but the credential is not in its vend scope (403). |
+| `5` | Credential not found: the credential name is absent from the broker's catalogue (404). |
+
+Example output (successful attestation, credential probed):
+
+```text
+signet verify — broker: https://portcullis.example.internal
+
+  key              OK             key present
+  attest           OK             bearer minted
+  credential my-cred      OK             resolvable
+
+result: OK
+```
+
+Example for a machine not yet enrolled:
+
+```text
+signet verify — broker: https://portcullis.example.internal
+
+  key              FAIL           no key enrolled: open ~/.signet/se-consumer.key: no such file or directory
+
+result: key missing (exit 2)
+```
+
+### doctor
+
+```text
+signet doctor [--backend <backend>] [--identity <name>] [--agent <socket>]
+```
+
+`doctor` probes each compiled-in backend and reports whether the underlying hardware is present and reachable. It is the first thing to run when setting up a new machine or diagnosing a failure.
+
+Without `--backend`, `doctor` probes all three backends and shows their status side by side. Passing `--backend` narrows the check to that one backend.
+
+Example output (all three backends, macOS without a TPM or YubiKey):
+
+```text
+signet doctor — platform: darwin/arm64
+
+  secure-enclave     OK             CryptoKit reports Secure Enclave present
+  tpm                UNAVAILABLE    no TPM device found (/dev/tpmrm0, /dev/tpm0, or TBS)
+  piv                UNAVAILABLE    no smart cards / YubiKeys detected
+```
+
+Example with `--backend secure-enclave`:
+
+```text
+signet doctor — platform: darwin/arm64
+
+  secure-enclave     OK             CryptoKit reports Secure Enclave present
+```
+
+`doctor` exits `0` if at least one probed backend is `OK`, and `1` if all probed backends are unavailable or failed.
+
+### version
+
+```text
+signet version
+```
+
+Prints the signet version, platform, and Go runtime. The format is:
+
+```text
+signet v2026.6.6 darwin/arm64 (go1.25.10)
+```

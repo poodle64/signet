@@ -7,7 +7,7 @@ signet uses cgo, which means the build is always a native, per-platform build dr
 ### macOS
 
 - Go 1.25
-- Xcode command line tools (`xcode-select --install`), so that `xcrun swiftc` is available — the Secure Enclave backend is compiled from `se_swift.swift`, a small CryptoKit shim
+- Xcode command line tools (`xcode-select --install`), so that `xcrun swiftc` is available — the Secure Enclave backend is compiled from `internal/signer/enclave.swift`, a small CryptoKit shim
 - A working C compiler (provided by the Xcode tools)
 
 ### Linux
@@ -31,7 +31,7 @@ make test        # CGO_ENABLED=1 go test ./...
 make clean       # remove the binary and Swift intermediates
 ```
 
-Never use a bare `go build` on macOS; `make build` compiles the Swift shim into `libsignet_se.a` first, which the cgo link requires. On Linux and Windows a bare `go build` would work but `make build` is the canonical path on all platforms.
+Never use a bare `go build` on macOS; `make build` compiles the Swift shim into `internal/signer/libsignet_se.a` first, which the cgo link requires. On Linux and Windows `go build ./cmd/signet` would work but `make build` is the canonical path on all platforms.
 
 ### TPM simulator tests
 

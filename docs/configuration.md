@@ -1,6 +1,6 @@
 # Configuration
 
-signet is configured with per-subcommand flags. There are no mandatory environment variables; the only ambient configuration is an optional identity name for the Secure Enclave backend. For the hardware backends themselves see [backends.md](backends.md); for the commands see [usage.md](usage.md).
+signet is configured entirely through per-subcommand flags. There are no environment variables. For the hardware backends themselves see [backends.md](backends.md); for the commands see [usage.md](usage.md).
 
 ## Flags (accepted on every subcommand)
 
@@ -51,10 +51,10 @@ All of signet's persistent state lives under a single dotfolder, `~/.signet` (di
 | Path | Mode | Backend | What it holds |
 | --- | --- | --- | --- |
 | `~/.signet/se-<identity>.key` | `0600` | Secure Enclave | The Enclave's opaque, hardware-wrapped key blob. `<identity>` is the value of `--identity` (default `consumer`). |
-| `~/.signet/cache/<url>_<identity>.json` | `0600` | all | A short-lived bearer token. |
+| `~/.signet/cache/<sanitised-url>_<keyfingerprint>.json` | `0600` | all | A short-lived bearer token. |
 
 The Secure Enclave blob is the Enclave's own machine-bound, hardware-wrapped key material; it is useless if copied to another machine, because only this Mac's Enclave can unwrap it.
 
-The bearer cache is keyed by both the broker URL and the identity, so one machine can hold separate bearers for several brokers or identities without collision. signet reuses a cached bearer until it nears expiry, renews it within 30 minutes of expiry, and re-attests from scratch if renewal is rejected. Deleting a cache file simply forces a fresh attestation on the next `auth`.
+The bearer cache is keyed by the broker URL and the enrolled public key's fingerprint (the first 16 hex characters of SHA-256 over the SPKI DER public key), so re-enrolling a new key for the same broker never serves a stale bearer minted for the old key. signet reuses a cached bearer until it nears expiry, renews it within 30 minutes of expiry, and re-attests from scratch if renewal is rejected. Deleting a cache file simply forces a fresh attestation on the next `auth`.
 
 **The TPM and PIV backends persist nothing on disk** beyond the bearer cache. Their signing key lives inside the hardware (a fixed TPM handle, or a PIV token slot), so there is no on-disk key blob to protect; the only file either backend writes is the bearer cache above.

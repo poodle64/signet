@@ -1,10 +1,10 @@
 <div align="center">
 
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/) [![Release](https://img.shields.io/github/v/release/poodle64/signet?style=flat-square)](https://github.com/poodle64/signet/releases/latest) [![Licence](https://img.shields.io/badge/Licence-MIT-blue?style=flat-square)](LICENSE)
-
-# Signet
+<img src="docs/branding/wordmark.svg" alt="signet" width="360">
 
 _The key that proves which machine you are; sealed in hardware, exportable to no one._
+
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev/) [![Release](https://img.shields.io/github/v/release/poodle64/signet?style=flat-square)](https://github.com/poodle64/signet/releases/latest) [![Licence](https://img.shields.io/badge/Licence-MIT-blue?style=flat-square)](LICENSE)
 
 One self-contained Go binary that gives a machine a hardware-rooted signing identity and trades a signed challenge for a short-lived bearer token — on whichever secure hardware the host has.
 
@@ -24,7 +24,7 @@ signet is a single self-contained Go binary that implements this pattern across 
 
 The backends are compiled in and selected at runtime; switching hardware is a one-flag change, not a migration. The private key never leaves the hardware. The only thing on disk is a short-lived bearer cache and, on macOS, the Enclave's own opaque key blob (useless if copied off the machine).
 
-signet acts as a standard credential helper — the same shape as `git credential`, `docker-credential-*`, and AWS `credential_process`. A consumer shells out for a fresh `Authorization` header on demand; signet produces it and exits. No daemon, no socket, no keepalive.
+signet acts as a standard credential helper — the same shape as `git credential`, `docker-credential-*`, and AWS `credential_process`. A consumer shells out for a fresh `Authorization` header on demand; signet produces it and exits. For workloads that cannot reach the hardware at all (a container with no path to the YubiKey), the `agent` subcommand runs one daemon that owns the token and signs for socket clients on request — the `ssh-agent` pattern — while every other subcommand stays single-shot.
 
 This is the same pattern AWS ships as IAM Roles Anywhere, generalised across the three secure-hardware substrates a heterogeneous fleet actually has.
 
@@ -56,6 +56,9 @@ signet doctor
 # Attest to a broker and get a bearer header
 signet auth https://your-broker.example.internal
 
+# Consumer pre-flight: confirm attestation and credential scope
+signet verify --broker https://your-broker.example.internal --credential my-secret
+
 # Print version
 signet version
 ```
@@ -68,7 +71,7 @@ signet auto-detects the available hardware. Pass `--backend` to override.
 
 | Backend | Platform | Auto-detected? | `--backend` value |
 | --- | --- | --- | --- |
-| Apple Secure Enclave | macOS | Yes | `secure-enclave` (alias `se`) |
+| Apple Secure Enclave | macOS | Yes | `secure-enclave` (aliases `enclave`, `se`) |
 | TPM 2.0 | Linux, Windows | Yes (if `/dev/tpmrm0` or TBS is reachable) | `tpm` |
 | YubiKey / PIV token | macOS, Linux, Windows | Fallback on Linux/Windows | `piv` |
 
@@ -86,6 +89,10 @@ See [Hardware backends](docs/backends.md) for the security model, library detail
 <tr>
 <td width="50%"><strong>Nothing exportable, nothing at rest</strong><br>The P-256 signing key is generated in hardware and never appears in a file, env var, log, or argv. The only persisted state is a short-lived bearer cache.</td>
 <td width="50%"><strong>No software-key fallback, by design</strong><br>A host with no secure hardware fails loudly rather than quietly degrading to a key on disk, so "this identity is hardware-rooted" is never a claim that is sometimes false.</td>
+</tr>
+<tr>
+<td width="50%"><strong>Consumer pre-flight (<code>verify</code>)</strong><br>Runs the full attestation round-trip and optionally probes a credential's vend scope. Exits with typed codes (0/2/3/4/5) so a health check or CI gate can branch on the exact failure mode.</td>
+<td width="50%"><strong>Agent mode for container workloads</strong><br>One daemon owns the hardware token and signs on request over Unix sockets — one socket pinned to one PIV slot — so a container attests without the token ever being mounted into it.</td>
 </tr>
 </table>
 
@@ -113,12 +120,13 @@ The [Portcullis](https://github.com/poodle64/portcullis) secrets broker is one e
 
 | Guide | What it covers |
 | --- | --- |
-| [Usage](docs/usage.md) | The enrol, sign, auth, doctor, and version commands; wiring as a credential helper |
+| [Usage](docs/usage.md) | All seven subcommands (enrol, sign, auth, verify, agent, doctor, version); wiring as a credential helper |
 | [Configuration](docs/configuration.md) | Flags (--backend, --slot, --identity), backend selection, and on-disk paths |
 | [Hardware backends](docs/backends.md) | The Secure Enclave, TPM, and PIV backends in depth |
 | [Building from source](docs/development/building.md) | The cgo build, the Swift shim, and the release toolchain |
 | [Contributing](CONTRIBUTING.md) | Build prerequisites, per-platform constraints, test commands |
 | [Security](SECURITY.md) | Reporting vulnerabilities and supported versions |
+| Brand assets | [`docs/branding/`](docs/branding/) |
 
 ## Contributing
 
