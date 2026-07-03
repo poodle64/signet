@@ -46,6 +46,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -80,12 +81,16 @@ func runVerify(args []string) int {
 	backend, slot, identity, agentSock := signerFlags(fs)
 	broker := fs.String("broker", "", "broker URL (required)")
 	cred := fs.String("credential", "", "credential name to probe (optional)")
-	if err := fs.Parse(args); err != nil {
+	help, err := parseArgs(fs, args)
+	if help {
+		return 0
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	if *broker == "" {
-		fmt.Fprintln(os.Stderr, "error: --broker is required")
+		fmt.Fprintln(os.Stderr, "error: signet verify: --broker is required")
 		return 1
 	}
 	s, err := selectSigner(*backend, *slot, *identity, *agentSock)
@@ -93,11 +98,21 @@ func runVerify(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	code, err := attest.Verify(s, *broker, *cred)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	}
+	// attest.Verify reports every failure on its own output; do not repeat the
+	// error on stderr here, or transport failures would print twice.
+	code, _ := attest.Verify(s, *broker, *cred)
 	return code
+}
+
+// parseArgs parses args with fs, treating -h/--help as success: the flag
+// package has already printed the flag list to stderr, so the caller should
+// simply exit 0 rather than wrapping flag.ErrHelp in an "error:" line.
+func parseArgs(fs *flag.FlagSet, args []string) (help bool, err error) {
+	err = fs.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return true, nil
+	}
+	return false, err
 }
 
 // signerFlags registers the backend/slot/identity/agent selection flags shared by
@@ -141,8 +156,12 @@ func run(args []string) error {
 	case "enrol":
 		fs := flag.NewFlagSet("enrol", flag.ContinueOnError)
 		backend, slot, identity, agentSock := signerFlags(fs)
-		userPresence := fs.Bool("user-presence", false, "require Touch ID per signature (secure-enclave backend)")
-		if err := fs.Parse(args[1:]); err != nil {
+		userPresence := fs.Bool("user-presence", false, "require Touch ID per signature (enrol only; secure-enclave backend)")
+		help, err := parseArgs(fs, args[1:])
+		if help {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 		s, err := selectSigner(*backend, *slot, *identity, *agentSock)
@@ -159,11 +178,15 @@ func run(args []string) error {
 	case "sign":
 		fs := flag.NewFlagSet("sign", flag.ContinueOnError)
 		backend, slot, identity, agentSock := signerFlags(fs)
-		if err := fs.Parse(args[1:]); err != nil {
+		help, err := parseArgs(fs, args[1:])
+		if help {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 		if fs.NArg() < 1 {
-			return fmt.Errorf("usage: signet sign [flags] <message>")
+			return fmt.Errorf("signet sign: a message argument is required (signet sign [flags] <message>)")
 		}
 		s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 		if err != nil {
@@ -179,11 +202,15 @@ func run(args []string) error {
 	case "auth":
 		fs := flag.NewFlagSet("auth", flag.ContinueOnError)
 		backend, slot, identity, agentSock := signerFlags(fs)
-		if err := fs.Parse(args[1:]); err != nil {
+		help, err := parseArgs(fs, args[1:])
+		if help {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 		if fs.NArg() < 1 {
-			return fmt.Errorf("usage: signet auth [flags] <broker-url>")
+			return fmt.Errorf("signet auth: a broker URL argument is required (signet auth [flags] <broker-url>)")
 		}
 		s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 		if err != nil {
@@ -196,24 +223,34 @@ func run(args []string) error {
 		var binds bindList
 		fs.Var(&binds, "bind", "socket=slot binding, repeatable (e.g. /run/signet/bd.sock=9c)")
 		backend := fs.String("backend", "piv", "hardware backend the agent owns (piv has selectable slots)")
-		if err := fs.Parse(args[1:]); err != nil {
+		help, err := parseArgs(fs, args[1:])
+		if help {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 		return agent.Run(*backend, binds)
 
 	case "version":
-		fmt.Printf("signet %s %s/%s (go %s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+		// runtime.Version() already carries the "go" prefix (e.g. go1.25.10).
+		fmt.Printf("signet %s %s/%s (%s)\n", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 		return nil
 
 	case "doctor":
 		fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-		// Accept the shared flags so the user can pass --identity etc. without
-		// an "unknown flag" error, even though doctor probes all backends.
-		_, _, _, _ = signerFlags(fs)
-		if err := fs.Parse(args[1:]); err != nil {
+		// Accept the shared flags so a command line built for another subcommand
+		// can be replayed against doctor; --backend narrows the probe to one
+		// backend, the rest are meaningless here and ignored.
+		backend, _, _, _ := signerFlags(fs)
+		help, err := parseArgs(fs, args[1:])
+		if help {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
-		return cmdDoctor()
+		return cmdDoctor(*backend)
 
 	case "verify":
 		// Reached only if someone calls run("verify", ...) directly (e.g. in tests
@@ -245,14 +282,14 @@ Subcommands:
   verify   Consumer pre-flight: attest and optionally probe a credential vend
   agent    Own the hardware and sign on request over Unix sockets (serve mode)
   version  Print the signet version, platform, and Go runtime
-  doctor   Probe each backend and report availability
+  doctor   Probe each backend and report availability (--backend probes one)
 
 Flags (enrol, sign, auth, verify, doctor):
   --backend    secure-enclave | tpm | piv   (default: auto-detect)
-  --slot       9a | 9c | 9d | 9e | 82..95  (piv backend only; default: 9c)
+  --slot       9a | 9c | 9d | 9e | 82..95   (piv only; 82..95 are hex retired slots; default: 9c)
   --identity   <name>                       (secure-enclave only; default: consumer)
-  --agent      <socket>                      (sign/enrol/auth/verify; sign via an agent, not local hardware)
-  --user-presence                           (enrol only; require Touch ID per sign)
+  --agent      <socket>                     (sign via a signet agent socket, not local hardware)
+  --user-presence                           (enrol only; require Touch ID per signature; secure-enclave only)
 
 Verify flags:
   --broker     <url>    broker URL (required)

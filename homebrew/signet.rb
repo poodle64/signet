@@ -44,7 +44,9 @@ class Signet < Formula
   end
 
   test do
-    # With no arguments the CLI prints its usage to stderr and exits non-zero.
-    assert_match "usage", shell_output("#{bin}/signet 2>&1", 1)
+    # With no arguments the CLI prints its help block to stdout and exits 0;
+    # an unknown subcommand exits 1 naming the failure.
+    assert_match "Usage", shell_output("#{bin}/signet")
+    assert_match "unknown subcommand", shell_output("#{bin}/signet nonsense 2>&1", 1)
   end
 end
