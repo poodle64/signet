@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 128" width="430" height="128" role="img" aria-label="signet wordmark">
+  <!--
+    The signet wordmark: the monogram beside the name set in the viewer's own
+    monospace font — deliberately, the same way the CLI renders in whatever
+    terminal font the user runs. Single ink colour (#111111).
+  -->
+  <g fill="none" stroke="none">
+    <circle cx="64" cy="64" r="52" stroke="#111111" stroke-width="7"/>
+    <path fill="#111111" fill-rule="evenodd" d="
+      M 64 34 L 90 49 L 90 79 L 64 94 L 38 79 L 38 49 Z
+      M 52 64 A 12 12 0 1 0 76 64 A 12 12 0 1 0 52 64 Z"/>
+  </g>
+  <text x="140" y="86" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', monospace"
+        font-size="60" font-weight="600" letter-spacing="1" fill="#111111">signet</text>
+</svg>

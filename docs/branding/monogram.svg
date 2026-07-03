@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="signet monogram">
+  <!--
+    The signet monogram: a signet ring seen face-on. The outer band is the
+    ring; the hexagon is the engraved seal face; the knockout centre is the
+    impression it leaves in wax. Single ink colour (#111111), no gradients,
+    no styling — the mark keeps the CLI's plain, monochrome character.
+    All geometry is exact: hexagon vertices at radius 30 around (64,64),
+    band at radius 52.
+  -->
+  <g fill="none" stroke="none">
+    <circle cx="64" cy="64" r="52" stroke="#111111" stroke-width="7"/>
+    <path fill="#111111" fill-rule="evenodd" d="
+      M 64 34 L 90 49 L 90 79 L 64 94 L 38 79 L 38 49 Z
+      M 52 64 A 12 12 0 1 0 76 64 A 12 12 0 1 0 52 64 Z"/>
+  </g>
+</svg>
