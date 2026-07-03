@@ -4,6 +4,27 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.7.0] - 2026-07-04
+
+### Added
+
+- `verify` subcommand — consumer pre-flight with typed exit codes. Runs the attestation round-trip against a broker (`--broker`) and optionally probes a credential vend (`--credential`), then exits 0 (success), 2 (no key enrolled), 3 (attestation rejected), 4 (credential out of vend scope), or 5 (credential not in the catalogue), so callers branch on the exact failure mode instead of one opaque "unauthorised". Its output never contains the minted bearer or a credential value.
+- `doctor --backend <name>` probes a single backend instead of all three, and an unknown backend name is now rejected instead of silently ignored.
+- Branding: `docs/branding/` carries the monochrome signet-ring wordmark and monogram (single ink `#111111`, geometry-only marks, monospace wordmark) with a canonical-colour reference; the README header now uses the wordmark.
+- CI test gate (`.github/workflows/ci.yaml`): gofmt, go vet, and the full test suite run on every pull request and push to main, natively on both release platforms.
+
+### Changed
+
+- **Repository layout**: the flat root package is now the standard Go CLI shape — `cmd/signet/` plus `internal/signer` (backends), `internal/attest` (broker client, bearer cache, auth/verify), `internal/agent` (daemon and socket client), and `internal/datadir`. The Swift Secure-Enclave shim lives at `internal/signer/enclave.swift` and its build products stay inside that package directory. Build and install interfaces are unchanged (`make build`, `make test`, same release artifacts).
+- CLI polish: `version` no longer doubles the `go` prefix (`(go1.25.10)`, not `(go go1.25.10)`); `-h`/`--help` on a subcommand exits 0 after printing the flag list instead of exit 1 with `error: flag: help requested`; missing-argument errors share one shape (`signet <subcommand>: a <thing> argument is required`); `verify` transport errors are reported once, not twice; help-text columns align and the `82..95` slot range is labelled as hex.
+- Broker rejections are classified by a typed error carrying the HTTP status instead of matching on message text (no wire or exit-code change).
+- Release workflow: failure notifications post directly to ntfy (the private composite action can never resolve on this public repo), and `actions/checkout` is pinned at v7.0.0.
+- Documentation truth-up: the bearer cache is keyed by broker URL plus the enrolled key's fingerprint (not an identity name); configuration is flags-only with no environment variables; the `agent` daemon is documented as the deliberate long-lived counterpart to the single-shot credential-helper flows; usage now covers all seven subcommands.
+
+### Fixed
+
+- Homebrew formula `test do` block asserted behaviour that no longer exists (no-argument invocation exiting 1 with lowercase `usage` on stderr); it now asserts the real contract — help on stdout exit 0, unknown subcommand exit 1.
+
 ## [2026.6.6] - 2026-06-29
 
 ### Added

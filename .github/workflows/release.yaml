@@ -7,16 +7,17 @@
 # SECURE ENCLAVE — works on the unsigned release binary:
 #   The SE backend uses CryptoKit's self-stored-key-blob model (like age-plugin-se):
 #   it creates a hardware-bound P-256 key, stores the Enclave's opaque wrapped blob
-#   in a file (~/.local/share/signet/), and never touches the keychain.
+#   in a file (~/.signet/), and never touches the keychain.
 #   Because the keychain is bypassed, no code-signing entitlement is needed.
 #   Notarisation is irrelevant (a Gatekeeper distribution gate, not a runtime SE
 #   gate). All three backends work on the released binary.
 #
 # DARWIN BUILD — compiles the Swift shim first:
-#   The SE backend links a small Swift shim (se_swift.swift) as a static archive
-#   (libsignet_se.a). `make build` handles the swiftc step then the Go build.
-#   macOS GitHub runners ship Xcode, so xcrun swiftc is available. Plain `go build`
-#   on macOS fails to link without the archive.
+#   The SE backend links a small Swift shim (internal/signer/enclave.swift) as a
+#   static archive (internal/signer/libsignet_se.a). `make build` handles the
+#   swiftc step then the Go build. macOS GitHub runners ship Xcode, so xcrun
+#   swiftc is available. Plain `go build` on macOS fails to link without the
+#   archive.
 #
 # WHY NATIVE PER-PLATFORM BUILDS:
 #   cgo (required by the SE and go-tpm/go-piv backends) cannot be cross-compiled
