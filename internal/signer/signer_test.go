@@ -31,24 +31,9 @@ func TestNew_BackendOverride_PIV(t *testing.T) {
 	}
 }
 
-// TestNew_BackendOverride_SE verifies the SE aliases on darwin.
-func TestNew_BackendOverride_SE(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skipf("SE backend only available on darwin (GOOS=%s)", runtime.GOOS)
-	}
-	for _, alias := range []string{"secure-enclave", "enclave", "se"} {
-		alias := alias
-		t.Run(alias, func(t *testing.T) {
-			s, err := New(alias, "", "")
-			if err != nil {
-				t.Fatalf("New(%q): %v", alias, err)
-			}
-			if _, ok := s.(*enclaveSigner); !ok {
-				t.Errorf("New(%q) type = %T, want *enclaveSigner", alias, s)
-			}
-		})
-	}
-}
+// The secure-enclave alias test lives in enclave_darwin_test.go: the
+// *enclaveSigner type only exists behind the darwin build tag, so a type
+// assertion on it here would fail to compile on every other platform.
 
 // TestNew_UnknownBackend verifies an unknown backend returns an error that
 // names the unknown value and the valid options. An empty backend is not tested
