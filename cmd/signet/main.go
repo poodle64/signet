@@ -26,11 +26,12 @@
 //	signet sign    [flags] <message>
 //	signet auth    [flags] <broker-url>
 //	signet verify  [flags] --broker <url> [--credential <name>]
+//	signet headers [flags] --broker <url> --credential <name> [--header <name>] [--format bearer|raw]
 //	signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 //	signet version
 //	signet doctor  [flags]
 //
-// Flags (enrol, sign, auth, verify, doctor):
+// Flags (enrol, sign, auth, verify, headers, doctor):
 //
 //	--backend   secure-enclave | tpm | piv   (default: auto-detect for the platform)
 //	--slot      9a | 9c | 9d | 9e | 82..95   (piv backend only; default: 9c)
@@ -62,10 +63,14 @@ import (
 var version = "dev"
 
 func main() {
-	// 'verify' is handled here rather than in run() because it needs typed exit
-	// codes (2–5) that cannot be expressed as errors and still give os.Exit(1).
+	// 'verify' and 'headers' are handled here rather than in run() because they
+	// need typed exit codes (2–6) that cannot be expressed as errors and still
+	// give os.Exit(1).
 	if len(os.Args) > 1 && os.Args[1] == "verify" {
 		os.Exit(runVerify(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "headers" {
+		os.Exit(runHeaders(os.Args[2:]))
 	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -101,6 +106,51 @@ func runVerify(args []string) int {
 	// attest.Verify reports every failure on its own output; do not repeat the
 	// error on stderr here, or transport failures would print twice.
 	code, _ := attest.Verify(s, *broker, *cred)
+	return code
+}
+
+// runHeaders parses headers' flags and calls attest.Headers, returning the
+// typed exit code. It is separate from run() so typed exits never conflict
+// with run()'s single error/exit-1 contract.
+func runHeaders(args []string) int {
+	fs := flag.NewFlagSet("headers", flag.ContinueOnError)
+	backend, slot, identity, agentSock := signerFlags(fs)
+	broker := fs.String("broker", "", "broker URL (required)")
+	cred := fs.String("credential", "", "credential name to vend (required)")
+	header := fs.String("header", "Authorization", "HTTP header name to emit")
+	format := fs.String("format", "bearer", `value format: "bearer" (prints "Bearer <value>") or "raw" (prints the bare value)`)
+	help, err := parseArgs(fs, args)
+	if help {
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if *broker == "" {
+		fmt.Fprintln(os.Stderr, "error: signet headers: --broker is required")
+		return 1
+	}
+	if *cred == "" {
+		fmt.Fprintln(os.Stderr, "error: signet headers: --credential is required")
+		return 1
+	}
+	if strings.TrimSpace(*header) == "" {
+		fmt.Fprintln(os.Stderr, "error: signet headers: --header must not be empty")
+		return 1
+	}
+	if *format != "bearer" && *format != "raw" {
+		fmt.Fprintf(os.Stderr, "error: signet headers: --format must be \"bearer\" or \"raw\", got %q\n", *format)
+		return 1
+	}
+	s, err := selectSigner(*backend, *slot, *identity, *agentSock)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	// attest.Headers reports every failure on stderr; do not repeat the error
+	// here, or failures would print twice.
+	code, _ := attest.Headers(s, *broker, *cred, *header, *format)
 	return code
 }
 
@@ -258,6 +308,12 @@ func run(args []string) error {
 		// run() is called, so this branch exists only for completeness.
 		return fmt.Errorf("use 'signet verify' directly; typed exit codes require os.Exit")
 
+	case "headers":
+		// Reached only if someone calls run("headers", ...) directly (e.g. in
+		// tests that go through run()). In practice main() short-circuits headers
+		// before run() is called, so this branch exists only for completeness.
+		return fmt.Errorf("use 'signet headers' directly; typed exit codes require os.Exit")
+
 	default:
 		return fmt.Errorf("unknown subcommand %q\n\n%s", args[0], helpText())
 	}
@@ -280,11 +336,12 @@ Subcommands:
   sign     Sign a message with the hardware key and print the base64 signature
   auth     Attest to a broker and print the Authorization header (JSON)
   verify   Consumer pre-flight: attest and optionally probe a credential vend
+  headers  Attest, vend a credential, and print one HTTP header as compact JSON
   agent    Own the hardware and sign on request over Unix sockets (serve mode)
   version  Print the signet version, platform, and Go runtime
   doctor   Probe each backend and report availability (--backend probes one)
 
-Flags (enrol, sign, auth, verify, doctor):
+Flags (enrol, sign, auth, verify, headers, doctor):
   --backend    secure-enclave | tpm | piv   (default: auto-detect)
   --slot       9a | 9c | 9d | 9e | 82..95   (piv only; 82..95 are hex retired slots; default: 9c)
   --identity   <name>                       (secure-enclave only; default: consumer)
@@ -301,6 +358,20 @@ Verify exit codes:
   3  attestation rejected — broker refused the attestation
   4  credential out of scope — identity exists but credential is not in its scope
   5  credential not found — credential name absent from the catalogue
+
+Headers flags:
+  --broker     <url>    broker URL (required)
+  --credential <name>   credential name to vend (required)
+  --header     <name>   HTTP header name to emit (default: Authorization)
+  --format     bearer | raw   "Bearer <value>" or the bare value (default: bearer)
+
+Headers exit codes:
+  0  success — header line printed to stdout
+  2  key missing — no key enrolled for this identity
+  3  attestation rejected — broker refused the attestation
+  4  credential out of scope — identity exists but credential is not in its scope
+  5  credential not found — credential name absent from the catalogue
+  6  unusable material — credential is not a single-field static value
 
 Agent (serve mode):
   signet agent --bind <socket>=<slot> [--bind ...] [--backend piv]

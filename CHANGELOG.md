@@ -4,6 +4,12 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.7.1] - 2026-07-10
+
+### Added
+
+- `headers` subcommand — the vend-to-headers helper for Claude Code's `.mcp.json` `headersHelper` contract. Performs a fresh attestation each run (deliberately no bearer-cache reuse: always-fresh proof of possession, matching `verify`) followed by `verify`'s credential-vend leg: it attests to a broker (`--broker`), vends a named credential (`--credential`), and prints ONE compact-JSON header line to stdout — `{"Authorization":"Bearer <value>"}` by default, or `{"<name>":"<value>"}` with `--header <name>` and `--format raw`. The credential must resolve to `static` material with exactly one field; anything else (a `session` credential, or zero/multiple static fields) is a typed refusal, never a partial print. Exit codes extend `verify`'s vocabulary: 0 success, 2 key missing, 3 attestation rejected, 4 credential out of scope, 5 credential not found, 6 unusable material. Like `verify`, its output never contains the minted bearer, and on failure it never contains the credential value.
+
 ## [2026.7.0] - 2026-07-04
 
 ### Added

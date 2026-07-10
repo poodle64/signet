@@ -25,12 +25,13 @@ signet enrol   [--backend <backend>] [--identity <name>] [--user-presence]
 signet sign    [--backend <backend>] [--identity <name>] <message>
 signet auth    [--backend <backend>] [--identity <name>] <broker-url>
 signet verify  --broker <url> [--credential <name>] [--backend <backend>] [--identity <name>]
+signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--backend <backend>] [--identity <name>]
 signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 signet doctor  [--backend <backend>]
 signet version
 ```
 
-`enrol`, `sign`, `auth`, `verify`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
+`enrol`, `sign`, `auth`, `verify`, `headers`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
 
 ### enrol
 
@@ -143,6 +144,46 @@ signet verify — broker: https://broker.example.internal
   key              FAIL           no key enrolled: open ~/.signet/se-consumer.key: no such file or directory
 
 result: key missing (exit 2)
+```
+
+### headers
+
+```text
+signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--backend <backend>] [--identity <name>] [--agent <socket>]
+```
+
+`headers` is the vend-to-headers credential helper: it runs the same attestation round-trip as `verify`, then vends `--credential` from the broker and prints it as a compact JSON HTTP header line — the shape a `.mcp.json` `headersHelper` (or any `credential_process`-style consumer) captures directly. Unlike `verify`, which only probes whether a credential *would* resolve, `headers` returns the credential's actual value, so it is not a diagnostic; it is the header-producing call itself.
+
+The vended credential must resolve to a single-field static value: `material.kind` must be `static`, and `material.fields` must hold exactly one field. A `session` credential, or a static credential with zero or more than one field, is a typed refusal rather than a guess at which field to print — `headers` never chooses on the caller's behalf.
+
+`--header` sets the JSON key to emit (default `Authorization`); `--format` sets how the value is wrapped — `bearer` (default) prints `"Bearer <value>"`, `raw` prints the bare value.
+
+The credential value only ever lands on stdout, as the one line `headers` prints on success. Every diagnostic and every failure message goes to stderr instead, and never contains the credential value or the minted attestation bearer: on failure the message names only the failure class (key missing, broker rejection, out of scope, not found, or the shape of the unusable material), so a `headersHelper` invocation that fails never leaks a secret into a log capturing stderr.
+
+`headers` exits with a typed code:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success: the header line was printed to stdout. |
+| `1` | Unexpected transport or argument error. |
+| `2` | Key missing: no key enrolled for this identity and backend. |
+| `3` | Attestation rejected: the broker refused the attestation (4xx). |
+| `4` | Credential out of scope: the identity is attested but the credential is not in its vend scope (403). |
+| `5` | Credential not found: the credential name is absent from the broker's catalogue (404). |
+| `6` | Unusable material: the credential is not a single-field static value. |
+
+Example (a static, single-field credential named `example-api`):
+
+```text
+$ signet headers --broker https://broker.example.internal --credential example-api
+{"Authorization":"Bearer sk_live_abc123..."}
+```
+
+With `--header` and `--format raw`:
+
+```text
+$ signet headers --broker https://broker.example.internal --credential example-api --header X-Api-Key --format raw
+{"X-Api-Key":"sk_live_abc123..."}
 ```
 
 ### doctor

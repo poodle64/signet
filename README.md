@@ -114,13 +114,29 @@ Wire `signet auth` as the `headersHelper` in a Claude Code MCP config, or as any
 
 To use a specific backend: `signet auth --backend piv https://your-broker.example.internal`
 
+`auth` prints signet's own attestation bearer — the credential that proves *this machine's* identity to the broker. Some hosted servers instead expect a **broker-vended credential**, a separate secret the broker holds on the consumer's behalf (a hosted API's bearer, an upstream service token), as their `Authorization` header. For that case wire `signet headers` instead: it attests the same way `auth` does, then vends the named credential and prints it as the header:
+
+```json
+{
+  "mcpServers": {
+    "example-api": {
+      "type": "http",
+      "url": "https://your-broker.example.internal/mcp",
+      "headersHelper": "signet headers --broker https://your-broker.example.internal --credential example-api"
+    }
+  }
+}
+```
+
+`--header` and `--format` control the emitted JSON key and value wrapping (default `Authorization` / `bearer`); see [Usage](docs/usage.md#headers) for the full flag and exit-code reference.
+
 signet speaks the `/v1/attest` HTTP contract and nothing more; it is not coupled to any specific broker's business logic, and any secrets broker implementing the contract can consume it.
 
 ## Documentation
 
 | Guide | What it covers |
 | --- | --- |
-| [Usage](docs/usage.md) | All seven subcommands (enrol, sign, auth, verify, agent, doctor, version); wiring as a credential helper |
+| [Usage](docs/usage.md) | All eight subcommands (enrol, sign, auth, verify, headers, agent, doctor, version); wiring as a credential helper |
 | [Configuration](docs/configuration.md) | Flags (--backend, --slot, --identity), backend selection, and on-disk paths |
 | [Hardware backends](docs/backends.md) | The Secure Enclave, TPM, and PIV backends in depth |
 | [Building from source](docs/development/building.md) | The cgo build, the Swift shim, and the release toolchain |

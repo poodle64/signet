@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/poodle64/signet/internal/signer"
@@ -99,7 +100,7 @@ func Verify(s signer.Signer, brokerURL, credName string) (exitCode int, err erro
 	}
 
 	// Step 3: probe the credential vend endpoint.
-	endpoint := strings.TrimRight(brokerURL, "/") + "/v1/credentials/" + credName
+	endpoint := strings.TrimRight(brokerURL, "/") + "/v1/credentials/" + url.PathEscape(credName)
 	status, body, getErr := brokerGet(endpoint, bc.Key)
 	if getErr != nil {
 		fmt.Printf("  credential       FAIL           network error: %v\n", getErr)
