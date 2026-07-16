@@ -26,12 +26,13 @@ signet sign    [--backend <backend>] [--identity <name>] <message>
 signet auth    [--backend <backend>] [--identity <name>] <broker-url>
 signet verify  --broker <url> [--credential <name>] [--backend <backend>] [--identity <name>]
 signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--backend <backend>] [--identity <name>]
+signet vend-to-file --broker <url> [--field <name>] [--mode <octal>] [--print-shape] [--backend <backend>] [--identity <name>] <name> <dest>
 signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 signet doctor  [--backend <backend>]
 signet version
 ```
 
-`enrol`, `sign`, `auth`, `verify`, `headers`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
+`enrol`, `sign`, `auth`, `verify`, `headers`, `vend-to-file`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
 
 ### enrol
 
@@ -184,6 +185,59 @@ With `--header` and `--format raw`:
 ```text
 $ signet headers --broker https://broker.example.internal --credential example-api --header X-Api-Key --format raw
 {"X-Api-Key":"sk_live_abc123..."}
+```
+
+### vend-to-file
+
+```text
+signet vend-to-file --broker <url> [--field <name>] [--mode <octal>] [--print-shape] [--backend <backend>] [--identity <name>] [--agent <socket>] <name> <dest>
+```
+
+`vend-to-file` runs the same attestation round-trip as `verify` and `headers`, then vends `<name>` from the broker and writes one field's value straight to `<dest>` — atomically, at mode `0600` by default — instead of printing it. It exists for consumers that need a credential placed at a file (a `.env`, an `.envrc.local`, a stack secret sink) without the value ever passing through a shell pipeline, a log, or an LLM transcript: the value is written to disk and is never printed to stdout or stderr.
+
+Unlike `headers`, which only understands a single-field `static` credential, `vend-to-file` also understands `session` material:
+
+- **`static`** — the sole field's value if the credential has exactly one field; `--field <name>` selects among two or more (or overrides a single field) by exact name match. A name that does not exist, or an ambiguous multi-field credential with no `--field`, is a typed refusal that names the available field *names* — never a value.
+- **`session`** — always the `access_token` field; `--field` is not consulted. A cookie-only session with no `access_token` is a typed refusal naming the gap, never a guess at which cookie to write.
+
+`--mode` sets the destination's file mode as an octal string (default `0600`). `--print-shape` prints only the credential's `kind` and field names — never a value — and writes no file; use it to see what a credential offers before choosing `--field`. `--field` is ignored when `--print-shape` is set: the shape is printed before any field is resolved, so no file is written either way.
+
+The write is atomic: a temp file is created in `<dest>`'s own directory, written, fsynced, and chmoded, then renamed over `<dest>` only once every prior step has succeeded. On any failure `<dest>` is left exactly as it was — never created, never partially written — and no temp file is left behind.
+
+The only line `vend-to-file` prints on success is a non-secret confirmation, e.g. `wrote 42 bytes to /etc/myapp/token (mode 0600)`. Every diagnostic and every failure message goes to stderr instead, and never contains the credential value or the minted attestation bearer: on failure the message names only the failure class (key missing, broker rejection, out of scope, not found, or the shape of the unusable material), so a failed run never leaks a secret into a log capturing stderr.
+
+`vend-to-file` exits with a typed code:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success: `<dest>` was written (or, with `--print-shape`, the shape was printed). |
+| `1` | Unexpected transport, argument, or filesystem error. |
+| `2` | Key missing: no key enrolled for this identity and backend. |
+| `3` | Attestation rejected: the broker refused the attestation (4xx). |
+| `4` | Credential out of scope: the identity is attested but the credential is not in its vend scope (403). |
+| `5` | Credential not found: the credential name is absent from the broker's catalogue (404). |
+| `6` | Unusable material: the credential cannot be resolved to a single field's value. |
+
+Example (a static, single-field credential named `example-api`, default mode):
+
+```text
+$ signet vend-to-file --broker https://broker.example.internal example-api /etc/myapp/token
+wrote 42 bytes to /etc/myapp/token (mode 0600)
+```
+
+Selecting one field of a multi-field static credential, and a stricter mode:
+
+```text
+$ signet vend-to-file --broker https://broker.example.internal --field password --mode 0640 db-creds /etc/myapp/db.pass
+wrote 18 bytes to /etc/myapp/db.pass (mode 0640)
+```
+
+Inspecting a credential's shape before choosing `--field`:
+
+```text
+$ signet vend-to-file --broker https://broker.example.internal --print-shape db-creds /etc/myapp/db.pass
+kind: static
+fields: username, password
 ```
 
 ### doctor

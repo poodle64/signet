@@ -40,27 +40,6 @@ const (
 	ExitHeadersUnusableMaterial = 6
 )
 
-// credentialField is one {name, value} pair inside static credential material.
-type credentialField struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-// credentialMaterial is the `material` object of a broker Credential envelope.
-// Only the fields headers needs are decoded; a `session` envelope's
-// access_token/cookies/extras are deliberately left unparsed so they can
-// never reach an error path.
-type credentialMaterial struct {
-	Kind   string            `json:"kind"`
-	Fields []credentialField `json:"fields"`
-}
-
-// credentialEnvelope is the broker's GET /v1/credentials/{name} response
-// shape, narrowed to what headers reads.
-type credentialEnvelope struct {
-	Material credentialMaterial `json:"material"`
-}
-
 // Headers is the vend-to-headers entry point. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
 //  2. Runs the attestation round-trip via attestFresh.

@@ -4,6 +4,12 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.7.2] - 2026-07-16
+
+### Added
+
+- `vend-to-file` subcommand — the vend-to-file helper for consumers that need a broker-vended credential placed at a file (a `.env`, an `.envrc.local`, a stack secret sink) instead of an HTTP header, without the value ever passing through a shell pipeline, a log, or an LLM transcript. Performs a fresh attestation each run (matching `headers`) followed by the same credential-vend leg, then writes ONE field's value atomically to `<dest>` at mode `0600` by default (`--mode` overrides): a temp file is created in `<dest>`'s own directory, written, fsynced, and chmoded, then renamed over `<dest>` only once every prior step has succeeded — on any failure `<dest>` is left exactly as it was, never created and never partially written. Widens material handling beyond `headers`' single-static-field assumption: a `static` credential with more than one field requires `--field <name>` to disambiguate (an ambiguous credential with no `--field`, or a `--field` naming an absent field, is a typed refusal naming the available field *names*, never a value); a `session` credential always resolves its `access_token` field, and a cookie-only session with no `access_token` is a typed refusal naming the gap. `--print-shape` prints only the credential's `kind` and field names — never a value — and writes no file, for inspecting a credential's shape before choosing `--field`. The only line printed to stdout on success is a non-secret byte-count confirmation; every diagnostic and failure message goes to stderr and never contains the credential value or the minted bearer. Exit codes extend `headers`' vocabulary: 0 success, 2 key missing, 3 attestation rejected, 4 credential out of scope, 5 credential not found, 6 unusable material. (poodle64/portcullis#107)
+
 ## [2026.7.1] - 2026-07-10
 
 ### Added

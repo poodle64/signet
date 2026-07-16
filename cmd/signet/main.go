@@ -27,11 +27,12 @@
 //	signet auth    [flags] <broker-url>
 //	signet verify  [flags] --broker <url> [--credential <name>]
 //	signet headers [flags] --broker <url> --credential <name> [--header <name>] [--format bearer|raw]
+//	signet vend-to-file [flags] --broker <url> [--field <name>] [--mode <octal>] [--print-shape] <name> <dest>
 //	signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 //	signet version
 //	signet doctor  [flags]
 //
-// Flags (enrol, sign, auth, verify, headers, doctor):
+// Flags (enrol, sign, auth, verify, headers, vend-to-file, doctor):
 //
 //	--backend   secure-enclave | tpm | piv   (default: auto-detect for the platform)
 //	--slot      9a | 9c | 9d | 9e | 82..95   (piv backend only; default: 9c)
@@ -52,6 +53,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/poodle64/signet/internal/agent"
@@ -71,6 +73,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "headers" {
 		os.Exit(runHeaders(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "vend-to-file" {
+		os.Exit(runVendToFile(os.Args[2:]))
 	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -152,6 +157,65 @@ func runHeaders(args []string) int {
 	// here, or failures would print twice.
 	code, _ := attest.Headers(s, *broker, *cred, *header, *format)
 	return code
+}
+
+// runVendToFile parses vend-to-file's flags and calls attest.VendToFile,
+// returning the typed exit code. It is separate from run() so typed exits
+// never conflict with run()'s single error/exit-1 contract.
+func runVendToFile(args []string) int {
+	fs := flag.NewFlagSet("vend-to-file", flag.ContinueOnError)
+	backend, slot, identity, agentSock := signerFlags(fs)
+	broker := fs.String("broker", "", "broker URL (required)")
+	field := fs.String("field", "", "static-material field to write (required when the credential has more than one static field; ignored for session material, which always writes access_token)")
+	modeFlag := fs.String("mode", "0600", "file mode for the written destination, octal (e.g. 0600)")
+	printShape := fs.Bool("print-shape", false, "print the credential's kind and field names, write no file, and exit")
+	help, err := parseArgs(fs, args)
+	if help {
+		return 0
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if *broker == "" {
+		fmt.Fprintln(os.Stderr, "error: signet vend-to-file: --broker is required")
+		return 1
+	}
+	if fs.NArg() < 2 {
+		fmt.Fprintln(os.Stderr, "error: signet vend-to-file: a credential name and destination path argument are required (signet vend-to-file [flags] <name> <dest>)")
+		return 1
+	}
+	mode, modeErr := parseFileMode(*modeFlag)
+	if modeErr != nil {
+		fmt.Fprintf(os.Stderr, "error: signet vend-to-file: --mode: %v\n", modeErr)
+		return 1
+	}
+	s, err := selectSigner(*backend, *slot, *identity, *agentSock)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	// attest.VendToFile reports every failure on stderr; do not repeat the
+	// error here, or failures would print twice.
+	code, _ := attest.VendToFile(s, *broker, fs.Arg(0), fs.Arg(1), *field, mode, *printShape)
+	return code
+}
+
+// parseFileMode parses an octal file-mode flag value (e.g. "0600" or "600"),
+// bounded to the 12 permission/sticky/setuid/setgid bits POSIX defines
+// (0-07777). Without this bound an oversized value like "20000000000" would
+// still parse (into an os.FileMode with high bits os.Chmod silently strips),
+// producing a confusing inaccessible "----------" dest instead of a clear
+// error at the flag-parsing boundary.
+func parseFileMode(s string) (os.FileMode, error) {
+	v, err := strconv.ParseUint(s, 8, 12)
+	if err != nil {
+		if errors.Is(err, strconv.ErrRange) {
+			return 0, fmt.Errorf("mode %q out of range (must be 0-07777)", s)
+		}
+		return 0, fmt.Errorf("invalid octal mode %q: %w", s, err)
+	}
+	return os.FileMode(v), nil
 }
 
 // parseArgs parses args with fs, treating -h/--help as success: the flag
@@ -314,6 +378,13 @@ func run(args []string) error {
 		// before run() is called, so this branch exists only for completeness.
 		return fmt.Errorf("use 'signet headers' directly; typed exit codes require os.Exit")
 
+	case "vend-to-file":
+		// Reached only if someone calls run("vend-to-file", ...) directly (e.g.
+		// in tests that go through run()). In practice main() short-circuits
+		// vend-to-file before run() is called, so this branch exists only for
+		// completeness.
+		return fmt.Errorf("use 'signet vend-to-file' directly; typed exit codes require os.Exit")
+
 	default:
 		return fmt.Errorf("unknown subcommand %q\n\n%s", args[0], helpText())
 	}
@@ -332,16 +403,17 @@ Usage:
   signet <subcommand> [flags]
 
 Subcommands:
-  enrol    Generate (or recover) the hardware key and print the SPKI public key
-  sign     Sign a message with the hardware key and print the base64 signature
-  auth     Attest to a broker and print the Authorization header (JSON)
-  verify   Consumer pre-flight: attest and optionally probe a credential vend
-  headers  Attest, vend a credential, and print one HTTP header as compact JSON
-  agent    Own the hardware and sign on request over Unix sockets (serve mode)
-  version  Print the signet version, platform, and Go runtime
-  doctor   Probe each backend and report availability (--backend probes one)
+  enrol         Generate (or recover) the hardware key and print the SPKI public key
+  sign          Sign a message with the hardware key and print the base64 signature
+  auth          Attest to a broker and print the Authorization header (JSON)
+  verify        Consumer pre-flight: attest and optionally probe a credential vend
+  headers       Attest, vend a credential, and print one HTTP header as compact JSON
+  vend-to-file  Attest, vend a credential, and write one field's value to a file
+  agent         Own the hardware and sign on request over Unix sockets (serve mode)
+  version       Print the signet version, platform, and Go runtime
+  doctor        Probe each backend and report availability (--backend probes one)
 
-Flags (enrol, sign, auth, verify, headers, doctor):
+Flags (enrol, sign, auth, verify, headers, vend-to-file, doctor):
   --backend    secure-enclave | tpm | piv   (default: auto-detect)
   --slot       9a | 9c | 9d | 9e | 82..95   (piv only; 82..95 are hex retired slots; default: 9c)
   --identity   <name>                       (secure-enclave only; default: consumer)
@@ -372,6 +444,25 @@ Headers exit codes:
   4  credential out of scope — identity exists but credential is not in its scope
   5  credential not found — credential name absent from the catalogue
   6  unusable material — credential is not a single-field static value
+
+Vend-to-file flags:
+  signet vend-to-file [flags] <name> <dest>
+  --broker      <url>    broker URL (required)
+  --field       <name>   static field to write (required when the credential
+                          has more than one static field; ignored for session
+                          material, which always writes access_token)
+  --mode        <octal>  file mode for <dest> (default: 0600)
+  --print-shape          print the credential's kind and field names, write no
+                          file, and exit
+
+Vend-to-file exit codes:
+  0  success — <dest> written atomically at the chosen mode (or, with
+     --print-shape, the kind and field names printed instead)
+  2  key missing — no key enrolled for this identity
+  3  attestation rejected — broker refused the attestation
+  4  credential out of scope — identity exists but credential is not in its scope
+  5  credential not found — credential name absent from the catalogue
+  6  unusable material — credential cannot be resolved to a single field's value
 
 Agent (serve mode):
   signet agent --bind <socket>=<slot> [--bind ...] [--backend piv]

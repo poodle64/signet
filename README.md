@@ -130,13 +130,21 @@ To use a specific backend: `signet auth --backend piv https://your-broker.exampl
 
 `--header` and `--format` control the emitted JSON key and value wrapping (default `Authorization` / `bearer`); see [Usage](docs/usage.md#headers) for the full flag and exit-code reference.
 
+Some consumers need the vended credential written to a **file** instead of an HTTP header — an agent placing a value at a destination (a `.env`, an `.envrc.local`, a stack secret sink) without it ever passing through a shell pipeline or an LLM transcript. `signet vend-to-file` attests the same way, then writes one field's value straight to disk, atomically, at mode `0600` by default:
+
+```sh
+signet vend-to-file --broker https://your-broker.example.internal example-api /etc/myapp/token
+```
+
+Nothing but a byte-count confirmation line ever reaches stdout; the credential value only ever lands in the destination file. See [Usage](docs/usage.md#vend-to-file) for `--field`, `--mode`, `--print-shape`, and the full exit-code reference.
+
 signet speaks the `/v1/attest` HTTP contract and nothing more; it is not coupled to any specific broker's business logic, and any secrets broker implementing the contract can consume it.
 
 ## Documentation
 
 | Guide | What it covers |
 | --- | --- |
-| [Usage](docs/usage.md) | All eight subcommands (enrol, sign, auth, verify, headers, agent, doctor, version); wiring as a credential helper |
+| [Usage](docs/usage.md) | All nine subcommands (enrol, sign, auth, verify, headers, vend-to-file, agent, doctor, version); wiring as a credential helper |
 | [Configuration](docs/configuration.md) | Flags (--backend, --slot, --identity), backend selection, and on-disk paths |
 | [Hardware backends](docs/backends.md) | The Secure Enclave, TPM, and PIV backends in depth |
 | [Building from source](docs/development/building.md) | The cgo build, the Swift shim, and the release toolchain |
