@@ -26,7 +26,7 @@
 //	signet sign    [flags] <message>
 //	signet auth    [flags] <broker-url>
 //	signet verify  [flags] --broker <url> [--credential <name>]
-//	signet headers [flags] --broker <url> --credential <name> [--header <name>] [--format bearer|raw]
+//	signet headers [flags] --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--bare]
 //	signet vend-to-file [flags] --broker <url> [--field <name>] [--mode <octal>] [--print-shape] <name> <dest>
 //	signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 //	signet version
@@ -122,8 +122,9 @@ func runHeaders(args []string) int {
 	backend, slot, identity, agentSock := signerFlags(fs)
 	broker := fs.String("broker", "", "broker URL (required)")
 	cred := fs.String("credential", "", "credential name to vend (required)")
-	header := fs.String("header", "Authorization", "HTTP header name to emit")
-	format := fs.String("format", "bearer", `value format: "bearer" (prints "Bearer <value>") or "raw" (prints the bare value)`)
+	header := fs.String("header", "Authorization", `HTTP header name to key the JSON object by (ignored, and refused, with --bare)`)
+	format := fs.String("format", "bearer", `value shape: "bearer" (emits "Bearer <value>") or "raw" (emits <value> alone)`)
+	bare := fs.Bool("bare", false, `print the value alone instead of a compact-JSON object (for "curl -H" interpolation)`)
 	help, err := parseArgs(fs, args)
 	if help {
 		return 0
@@ -148,6 +149,15 @@ func runHeaders(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: signet headers: --format must be \"bearer\" or \"raw\", got %q\n", *format)
 		return 1
 	}
+	// --bare prints no header name, so an explicitly-set --header could not be
+	// honoured. Refuse rather than ignore it: silently accepting a flag that
+	// does nothing is the failure this command already cost two sessions to.
+	// fs.Visit reports only flags actually set, so the "Authorization" default
+	// does not trip this.
+	if *bare && isFlagSet(fs, "header") {
+		fmt.Fprintln(os.Stderr, `error: signet headers: --header cannot be combined with --bare (--bare prints the value alone, with no header name); drop --header, or drop --bare to get {"<name>":"<value>"}`)
+		return 1
+	}
 	s, err := selectSigner(*backend, *slot, *identity, *agentSock)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -155,8 +165,21 @@ func runHeaders(args []string) int {
 	}
 	// attest.Headers reports every failure on stderr; do not repeat the error
 	// here, or failures would print twice.
-	code, _ := attest.Headers(s, *broker, *cred, *header, *format)
+	code, _ := attest.Headers(s, *broker, *cred, *header, *format, *bare)
 	return code
+}
+
+// isFlagSet reports whether name was explicitly passed on the command line,
+// as opposed to holding its default. flag exposes no direct query for this;
+// Visit walks only the flags actually set.
+func isFlagSet(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 // runVendToFile parses vend-to-file's flags and calls attest.VendToFile,
@@ -407,7 +430,7 @@ Subcommands:
   sign          Sign a message with the hardware key and print the base64 signature
   auth          Attest to a broker and print the Authorization header (JSON)
   verify        Consumer pre-flight: attest and optionally probe a credential vend
-  headers       Attest, vend a credential, and print one HTTP header as compact JSON
+  headers       Attest, vend a credential, and print one HTTP header (compact JSON, or --bare)
   vend-to-file  Attest, vend a credential, and write one field's value to a file
   agent         Own the hardware and sign on request over Unix sockets (serve mode)
   version       Print the signet version, platform, and Go runtime
@@ -434,8 +457,23 @@ Verify exit codes:
 Headers flags:
   --broker     <url>    broker URL (required)
   --credential <name>   credential name to vend (required)
-  --header     <name>   HTTP header name to emit (default: Authorization)
-  --format     bearer | raw   "Bearer <value>" or the bare value (default: bearer)
+  --header     <name>   HTTP header name to key the JSON object by (default: Authorization;
+                          cannot be combined with --bare, which prints no name)
+  --format     bearer | raw   value shape: "Bearer <value>" or <value> alone (default: bearer)
+  --bare                print the value alone, not a compact-JSON object
+
+Headers output shapes (--format shapes the value, --bare shapes the framing):
+  (default)             {"Authorization":"Bearer s3cr3t"}
+  --format raw          {"Authorization":"s3cr3t"}
+  --bare                Bearer s3cr3t
+  --bare --format raw   s3cr3t
+
+  The JSON shapes are the Claude Code .mcp.json headersHelper contract and are
+  the default. Use --bare for shell interpolation — a JSON-wrapped value inside
+  curl -H "Authorization: Bearer $v" builds a malformed header, which a broker
+  rejects as a 401 that looks exactly like a stale credential:
+    v=$(signet headers --broker <url> --credential <name> --bare --format raw)
+    curl -H "Authorization: Bearer $v" <url>
 
 Headers exit codes:
   0  success — header line printed to stdout

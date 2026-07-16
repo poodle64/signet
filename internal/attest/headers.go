@@ -1,7 +1,8 @@
 // headers.go: 'signet headers' — the vend-to-headers helper for Claude Code's
 // .mcp.json `headersHelper` contract. It composes the same attestation leg as
 // Auth with the same credential-vend leg as Verify, then extracts a single
-// static field and prints it as one compact-JSON HTTP header line.
+// static field and prints it, either as one compact-JSON HTTP header line
+// (the default, which is the headersHelper contract) or as a bare line.
 package attest
 
 import (
@@ -45,9 +46,24 @@ const (
 //  2. Runs the attestation round-trip via attestFresh.
 //  3. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
 //  4. Requires the result to be `static` material with exactly one field, and
-//     prints {"<headerName>":"<value>"} (format "raw") or
-//     {"<headerName>":"Bearer <value>"} (format "bearer", the default) as the
-//     ONLY line written to stdout.
+//     prints it as the ONLY line written to stdout.
+//
+// Two independent axes shape that line. `format` shapes the VALUE: "bearer"
+// (the default) prefixes "Bearer ", "raw" leaves the value alone. `bare`
+// shapes the FRAMING: false (the default) wraps the value in a compact-JSON
+// object keyed by headerName, true prints the value alone. They compose:
+//
+//	bare=false format="bearer"  {"Authorization":"Bearer <value>"}  (default)
+//	bare=false format="raw"     {"Authorization":"<value>"}
+//	bare=true  format="bearer"  Bearer <value>
+//	bare=true  format="raw"     <value>
+//
+// The JSON framings are the headersHelper contract and are load-bearing for
+// existing consumers; the bare framings exist because a JSON-wrapped value
+// interpolated into `curl -H "Authorization: Bearer $v"` builds a malformed
+// header, which the broker rejects as a 401 indistinguishable from a stale
+// credential. headerName has no meaning when bare is true (the name is not
+// printed), so the caller is refused rather than silently ignored.
 //
 // Every diagnostic — including every failure path — goes to stderr, and never
 // carries the credential value or the minted bearer: on failure the message
@@ -58,7 +74,7 @@ const (
 // error with a non-zero code means the check was conclusive and the caller
 // should exit with that code. A non-nil error with exit code 1 is an
 // unexpected transport or encoding failure.
-func Headers(s signer.Signer, brokerURL, credName, headerName, format string) (exitCode int, err error) {
+func Headers(s signer.Signer, brokerURL, credName, headerName, format string, bare bool) (exitCode int, err error) {
 	// Step 1: confirm a key is enrolled.
 	_, keyErr := s.PublicKeyDER()
 	if keyErr != nil {
@@ -119,6 +135,13 @@ func Headers(s signer.Signer, brokerURL, credName, headerName, format string) (e
 	headerValue := value
 	if format == "bearer" {
 		headerValue = "Bearer " + value
+	}
+	// Bare framing: the value alone, terminated by exactly one newline and
+	// nothing else, so `$(signet headers --bare)` captures precisely the value
+	// (command substitution strips the trailing newline).
+	if bare {
+		fmt.Println(headerValue)
+		return ExitHeadersOK, nil
 	}
 	out, marshalErr := json.Marshal(map[string]string{headerName: headerValue})
 	if marshalErr != nil {

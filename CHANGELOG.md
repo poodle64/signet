@@ -4,6 +4,16 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.7.3] - 2026-07-17
+
+### Added
+
+- `headers --bare` — prints the credential value alone instead of wrapping it in a compact-JSON object, for interpolating into a shell command. `--bare` and `--format` are independent axes and compose: `--format` shapes the VALUE (`bearer` prefixes `Bearer `, `raw` does not), `--bare` shapes the FRAMING (JSON object keyed by `--header`, or the value alone). The four shapes are `{"Authorization":"Bearer <v>"}` (default), `{"Authorization":"<v>"}` (`--format raw`), `Bearer <v>` (`--bare`), and `<v>` (`--bare --format raw`). The JSON default is unchanged and remains the `.mcp.json` `headersHelper` contract, so existing consumers are unaffected. This closes a silent trap: a JSON-wrapped value substituted into `curl -H "Authorization: Bearer $v"` builds a malformed header, and the server rejects it with a 401/403 that is indistinguishable from a stale or revoked credential — a failure that misdiagnosed two live credentials as stale across two sessions. `--header` names the JSON key and so has no meaning under `--bare`; combining them is refused rather than silently ignored. (poodle64/signet#5)
+
+### Fixed
+
+- `headers --format raw` was documented as printing "the bare value" in `--help`, in `docs/usage.md`, and in the flag's own description, but it has always emitted `{"Authorization":"<value>"}` — the JSON object, minus only the `Bearer ` prefix. The behaviour is unchanged (it is the pre-existing contract) and is now described accurately; `--bare` is the flag that actually removes the framing. `--help` now shows the output shape of every mode with a worked `curl` example, so the shape is visible before a caller is misled by it rather than after. (poodle64/signet#5)
+
 ## [2026.7.2] - 2026-07-16
 
 ### Added

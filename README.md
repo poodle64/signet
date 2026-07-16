@@ -128,7 +128,7 @@ To use a specific backend: `signet auth --backend piv https://your-broker.exampl
 }
 ```
 
-`--header` and `--format` control the emitted JSON key and value wrapping (default `Authorization` / `bearer`); see [Usage](docs/usage.md#headers) for the full flag and exit-code reference.
+`--header` and `--format` control the emitted JSON key and value wrapping (default `Authorization` / `bearer`), and `--bare` drops the JSON framing to print the value alone — the shape to interpolate into `curl -H`, since a JSON-wrapped value builds a malformed header and earns a 401 that looks just like a stale credential. See [Usage](docs/usage.md#headers) for the full flag and exit-code reference.
 
 Some consumers need the vended credential written to a **file** instead of an HTTP header — an agent placing a value at a destination (a `.env`, an `.envrc.local`, a stack secret sink) without it ever passing through a shell pipeline or an LLM transcript. `signet vend-to-file` attests the same way, then writes one field's value straight to disk, atomically, at mode `0600` by default:
 

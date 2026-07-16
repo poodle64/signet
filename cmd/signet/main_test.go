@@ -1,6 +1,9 @@
 package main
 
 import (
+	"flag"
+	"io"
+	"os"
 	"strings"
 	"testing"
 )
@@ -51,6 +54,118 @@ func TestRunHeadersFlagValidation(t *testing.T) {
 				t.Errorf("runHeaders(%v) = %d, want 1", tc.args, got)
 			}
 		})
+	}
+}
+
+// captureStderr runs f with os.Stderr redirected to a pipe and returns what was
+// written. runHeaders reports every refusal there.
+func captureStderr(t *testing.T, f func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = w
+	f()
+	w.Close()
+	os.Stderr = old
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read captured stderr: %v", err)
+	}
+	return string(b)
+}
+
+// TestRunHeadersBareWithHeaderRefused verifies --header with --bare is refused
+// rather than silently ignored (--bare prints no header name, so the flag could
+// not be honoured).
+//
+// It asserts the refusal MESSAGE, not just the exit code. Exit 1 alone proves
+// nothing here: with the refusal removed, runHeaders falls through to
+// selectSigner, which also exits 1 on a machine with no key enrolled — so a
+// code-only assertion passes against unfixed code, for the wrong reason. The
+// message is what distinguishes "refused the flag" from "no hardware".
+func TestRunHeadersBareWithHeaderRefused(t *testing.T) {
+	args := []string{"--broker", "https://broker.internal", "--credential", "example-api", "--bare", "--header", "X-Api-Key"}
+	var code int
+	stderr := captureStderr(t, func() {
+		code = runHeaders(args)
+	})
+	if code != 1 {
+		t.Errorf("runHeaders(%v) = %d, want 1", args, code)
+	}
+	if !strings.Contains(stderr, "--header cannot be combined with --bare") {
+		t.Errorf("stderr = %q, want the --header/--bare refusal; a bare exit 1 may only mean selectSigner failed", stderr)
+	}
+}
+
+// TestRunHeadersBareAloneNotRefused is the other half: --bare WITHOUT --header
+// must not trip the refusal. --header carries a non-empty default, so a
+// refusal keyed on the value rather than on the flag being set would reject
+// every plain --bare call — the mirror-image bug.
+func TestRunHeadersBareAloneNotRefused(t *testing.T) {
+	args := []string{"--broker", "https://broker.internal", "--credential", "example-api", "--bare"}
+	stderr := captureStderr(t, func() {
+		runHeaders(args)
+	})
+	if strings.Contains(stderr, "cannot be combined") {
+		t.Errorf("stderr = %q, want no refusal for --bare without --header", stderr)
+	}
+}
+
+// TestIsFlagSet pins the explicit-vs-default distinction the --bare/--header
+// refusal rests on: --header carries a non-empty default ("Authorization"), so
+// a value check cannot tell "set to the default" from "not set", and refusing
+// on the default would break every plain `--bare` call.
+func TestIsFlagSet(t *testing.T) {
+	newFS := func() (*flag.FlagSet, *string) {
+		fs := flag.NewFlagSet("headers", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		header := fs.String("header", "Authorization", "")
+		fs.Bool("bare", false, "")
+		return fs, header
+	}
+
+	fs, header := newFS()
+	if err := fs.Parse([]string{"--bare"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if isFlagSet(fs, "header") {
+		t.Error("isFlagSet(header) = true when --header was not passed")
+	}
+	if *header != "Authorization" {
+		t.Errorf("header = %q, want the default to still apply", *header)
+	}
+
+	// Passing the default value explicitly still counts as set: the user typed
+	// it, so the contradiction with --bare is real and must be reported.
+	fs, _ = newFS()
+	if err := fs.Parse([]string{"--header", "Authorization"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !isFlagSet(fs, "header") {
+		t.Error("isFlagSet(header) = false when --header was passed explicitly")
+	}
+}
+
+// TestHelpTextDocumentsHeadersOutputShapes pins issue #5's documentation half:
+// --help must show the output shape of every headers mode. The JSON shapes are
+// what a caller feeding stdout into `curl -H` needs to see BEFORE being
+// misled — a bare `--format raw` looks like it prints a bare value and does
+// not.
+func TestHelpTextDocumentsHeadersOutputShapes(t *testing.T) {
+	text := helpText()
+	for _, shape := range []string{
+		`{"Authorization":"Bearer s3cr3t"}`, // default
+		`{"Authorization":"s3cr3t"}`,        // --format raw
+		"Bearer s3cr3t",                     // --bare
+		"--bare --format raw",               // the bare-token mode
+		"curl -H",                           // the interpolation example
+	} {
+		if !strings.Contains(text, shape) {
+			t.Errorf("helpText() does not document headers output shape %q", shape)
+		}
 	}
 }
 

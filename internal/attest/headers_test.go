@@ -81,7 +81,7 @@ func TestHeaders_Success(t *testing.T) {
 	var code int
 	var err error
 	stdout, stderr := captureHeadersOutput(t, func() {
-		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	})
 	if err != nil {
 		t.Fatalf("Headers: %v", err)
@@ -109,7 +109,7 @@ func TestHeaders_HeaderOverride(t *testing.T) {
 	var code int
 	var err error
 	stdout, _ := captureHeadersOutput(t, func() {
-		code, err = Headers(s, srv.URL, "my-cred", "X-Api-Key", "bearer")
+		code, err = Headers(s, srv.URL, "my-cred", "X-Api-Key", "bearer", false)
 	})
 	if err != nil {
 		t.Fatalf("Headers: %v", err)
@@ -134,7 +134,7 @@ func TestHeaders_FormatRaw(t *testing.T) {
 	var code int
 	var err error
 	stdout, _ := captureHeadersOutput(t, func() {
-		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "raw")
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "raw", false)
 	})
 	if err != nil {
 		t.Fatalf("Headers: %v", err)
@@ -148,6 +148,133 @@ func TestHeaders_FormatRaw(t *testing.T) {
 	}
 }
 
+// TestHeaders_Bare verifies the bare framing emits exactly the header value
+// ("Bearer <value>" under the default format) with no JSON framing and no
+// trailing decoration beyond the single newline, so that
+// `v=$(signet headers --bare)` captures precisely the header value.
+func TestHeaders_Bare(t *testing.T) {
+	setTempHome(t)
+	srv := headersBrokerWithCredBody(t, http.StatusOK,
+		`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"value","value":"topsecretvalue123"}]}}`)
+	defer srv.Close()
+
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	var code int
+	var err error
+	stdout, stderr := captureHeadersOutput(t, func() {
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", true)
+	})
+	if err != nil {
+		t.Fatalf("Headers: %v", err)
+	}
+	if code != ExitHeadersOK {
+		t.Errorf("exit code = %d, want %d (ExitHeadersOK)", code, ExitHeadersOK)
+	}
+	// The whole contract in one assertion: exact value, exactly one trailing
+	// newline, nothing else.
+	want := "Bearer topsecretvalue123\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	// Assert the absence of JSON framing explicitly. The equality above already
+	// implies it, but naming it is the point of the mode: a caller interpolating
+	// this into `curl -H` must never receive a brace, a quote, or the header
+	// name. A failure here says exactly which trap reopened.
+	for _, frame := range []string{"{", "}", `"`, "Authorization", ":"} {
+		if strings.Contains(stdout, frame) {
+			t.Errorf("bare stdout %q contains JSON framing %q; must be the value alone", stdout, frame)
+		}
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty on success", stderr)
+	}
+}
+
+// TestHeaders_BareRaw verifies bare framing composes with --format raw to emit
+// the bare token alone — no "Bearer " prefix and no JSON framing. This is the
+// shape a caller interpolates into `curl -H "Authorization: Bearer $v"`.
+func TestHeaders_BareRaw(t *testing.T) {
+	setTempHome(t)
+	srv := headersBrokerWithCredBody(t, http.StatusOK,
+		`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"value","value":"rawvalue123"}]}}`)
+	defer srv.Close()
+
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	var code int
+	var err error
+	stdout, _ := captureHeadersOutput(t, func() {
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "raw", true)
+	})
+	if err != nil {
+		t.Fatalf("Headers: %v", err)
+	}
+	if code != ExitHeadersOK {
+		t.Errorf("exit code = %d, want %d (ExitHeadersOK)", code, ExitHeadersOK)
+	}
+	want := "rawvalue123\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	if strings.Contains(stdout, "Bearer") {
+		t.Errorf("stdout = %q, want no \"Bearer \" prefix under format raw", stdout)
+	}
+}
+
+// TestHeaders_BareIgnoresHeaderName verifies the bare framing never prints the
+// header name, whatever it is. The CLI refuses --header with --bare (see
+// TestRunHeaders_BareWithHeaderRefused); this pins the library behaviour that
+// refusal rests on, so a caller reaching Headers directly cannot get a name
+// smuggled into a value it is about to interpolate.
+func TestHeaders_BareIgnoresHeaderName(t *testing.T) {
+	setTempHome(t)
+	srv := headersBrokerWithCredBody(t, http.StatusOK,
+		`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"value","value":"apikeyvalue"}]}}`)
+	defer srv.Close()
+
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	var code int
+	var err error
+	stdout, _ := captureHeadersOutput(t, func() {
+		code, err = Headers(s, srv.URL, "my-cred", "X-Api-Key", "raw", true)
+	})
+	if err != nil {
+		t.Fatalf("Headers: %v", err)
+	}
+	if code != ExitHeadersOK {
+		t.Errorf("exit code = %d, want %d (ExitHeadersOK)", code, ExitHeadersOK)
+	}
+	want := "apikeyvalue\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q (header name must not appear)", stdout, want)
+	}
+}
+
+// TestHeaders_BareNoPartialPrintOnFailure verifies the bare framing keeps
+// headers' no-partial-print contract: an unusable credential prints nothing to
+// stdout, so a caller substituting the output into a shell variable gets an
+// empty string rather than a diagnostic fragment.
+func TestHeaders_BareNoPartialPrintOnFailure(t *testing.T) {
+	setTempHome(t)
+	srv := headersBrokerWithCredBody(t, http.StatusOK,
+		`{"name":"my-cred","material":{"kind":"session","access_token":"SUPERSECRETSESSIONVALUE"}}`)
+	defer srv.Close()
+
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	var code int
+	stdout, stderr := captureHeadersOutput(t, func() {
+		code, _ = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", true)
+	})
+	if code != ExitHeadersUnusableMaterial {
+		t.Errorf("exit code = %d, want %d (ExitHeadersUnusableMaterial)", code, ExitHeadersUnusableMaterial)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty on failure (no partial print)", stdout)
+	}
+	if strings.Contains(stderr, "SUPERSECRETSESSIONVALUE") {
+		t.Error("credential value leaked into headers stderr under --bare")
+	}
+}
+
 // TestHeaders_SessionKindRefused verifies exit code 6 when the vended
 // credential is `session` material, which headers cannot turn into a single
 // static header value.
@@ -158,7 +285,7 @@ func TestHeaders_SessionKindRefused(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -176,7 +303,7 @@ func TestHeaders_MultiFieldRefused(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -194,7 +321,7 @@ func TestHeaders_ZeroFieldsRefused(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -211,7 +338,7 @@ func TestHeaders_UnparsableEnvelope(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -228,7 +355,7 @@ func TestHeaders_CredOutOfScope(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -245,7 +372,7 @@ func TestHeaders_CredNotFound(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -261,7 +388,7 @@ func TestHeaders_KeyMissing(t *testing.T) {
 	s := &stubSigner{pubKeyErr: errors.New("key blob not found")}
 	// Use an unreachable URL; any attempt to dial it would produce a transport
 	// error that would appear as exit code 1, catching a regression.
-	code, err := Headers(s, "http://127.0.0.1:0", "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, "http://127.0.0.1:0", "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -278,7 +405,7 @@ func TestHeaders_AttestRejected(t *testing.T) {
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
@@ -301,7 +428,7 @@ func TestHeaders_NoSecretInStderr(t *testing.T) {
 	var code int
 	var err error
 	stdout, stderr := captureHeadersOutput(t, func() {
-		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer")
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
 	})
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)

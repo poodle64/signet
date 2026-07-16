@@ -150,14 +150,25 @@ result: key missing (exit 2)
 ### headers
 
 ```text
-signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--backend <backend>] [--identity <name>] [--agent <socket>]
+signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--bare] [--backend <backend>] [--identity <name>] [--agent <socket>]
 ```
 
-`headers` is the vend-to-headers credential helper: it runs the same attestation round-trip as `verify`, then vends `--credential` from the broker and prints it as a compact JSON HTTP header line — the shape a `.mcp.json` `headersHelper` (or any `credential_process`-style consumer) captures directly. Unlike `verify`, which only probes whether a credential *would* resolve, `headers` returns the credential's actual value, so it is not a diagnostic; it is the header-producing call itself.
+`headers` is the vend-to-headers credential helper: it runs the same attestation round-trip as `verify`, then vends `--credential` from the broker and prints it — by default as a compact JSON HTTP header line, the shape a `.mcp.json` `headersHelper` (or any `credential_process`-style consumer) captures directly. Unlike `verify`, which only probes whether a credential *would* resolve, `headers` returns the credential's actual value, so it is not a diagnostic; it is the header-producing call itself.
 
 The vended credential must resolve to a single-field static value: `material.kind` must be `static`, and `material.fields` must hold exactly one field. A `session` credential, or a static credential with zero or more than one field, is a typed refusal rather than a guess at which field to print — `headers` never chooses on the caller's behalf.
 
-`--header` sets the JSON key to emit (default `Authorization`); `--format` sets how the value is wrapped — `bearer` (default) prints `"Bearer <value>"`, `raw` prints the bare value.
+Two independent flags shape the output. `--format` shapes the **value**: `bearer` (default) emits `Bearer <value>`, `raw` emits `<value>` alone. `--bare` shapes the **framing**: without it (default) the value is wrapped in a compact-JSON object keyed by `--header` (default `Authorization`); with it, the value is printed alone. They compose:
+
+| Flags | stdout |
+| --- | --- |
+| *(default)* | `{"Authorization":"Bearer s3cr3t"}` |
+| `--format raw` | `{"Authorization":"s3cr3t"}` |
+| `--bare` | `Bearer s3cr3t` |
+| `--bare --format raw` | `s3cr3t` |
+
+The JSON framings are the `headersHelper` contract and remain the default. Reach for `--bare` when interpolating into a shell command: a JSON-wrapped value substituted into `curl -H "Authorization: Bearer $v"` builds a **malformed header**, and the server rejects it with a 401 or 403 that is indistinguishable from a stale or revoked credential. Note that `--format raw` alone does *not* do this — it removes the `Bearer ` prefix but keeps the JSON object; `--bare` is the flag that removes the framing.
+
+`--header` names the JSON key, so it has no meaning under `--bare` (which prints no key). Combining them is refused rather than silently ignored.
 
 The credential value only ever lands on stdout, as the one line `headers` prints on success. Every diagnostic and every failure message goes to stderr instead, and never contains the credential value or the minted attestation bearer: on failure the message names only the failure class (key missing, broker rejection, out of scope, not found, or the shape of the unusable material), so a `headersHelper` invocation that fails never leaks a secret into a log capturing stderr.
 
@@ -180,11 +191,24 @@ $ signet headers --broker https://broker.example.internal --credential example-a
 {"Authorization":"Bearer sk_live_abc123..."}
 ```
 
-With `--header` and `--format raw`:
+With `--header` and `--format raw` — note the JSON object remains:
 
 ```text
 $ signet headers --broker https://broker.example.internal --credential example-api --header X-Api-Key --format raw
 {"X-Api-Key":"sk_live_abc123..."}
+```
+
+With `--bare`, for interpolating into a shell command:
+
+```text
+$ signet headers --broker https://broker.example.internal --credential example-api --bare
+Bearer sk_live_abc123...
+
+$ signet headers --broker https://broker.example.internal --credential example-api --bare --format raw
+sk_live_abc123...
+
+$ v=$(signet headers --broker https://broker.example.internal --credential example-api --bare --format raw)
+$ curl -H "Authorization: Bearer $v" https://api.example.internal/v1/thing
 ```
 
 ### vend-to-file
