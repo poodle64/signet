@@ -66,13 +66,15 @@ const (
 
 // Exec is the vend-and-exec entry point. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
-//  2. Runs the attestation round-trip via attestFresh.
-//  3. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
-//  4. Resolves one value out of the material via resolveField (shared with
-//     VendToFile — the same static/session widening applies here).
-//  5. Resolves argv[0] to an executable via exec.LookPath, so a bare command
+//  2. Resolves argv[0] to an executable via exec.LookPath, so a bare command
 //     name (e.g. "github-mcp-server") is found on PATH the way a shell would
-//     find it, rather than only a path containing a slash.
+//     find it, rather than only a path containing a slash. This runs before
+//     the broker legs so a typo'd command spends no vend and leaves no
+//     speculative entry in the broker's audit log.
+//  3. Runs the attestation round-trip via attestFresh.
+//  4. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
+//  5. Resolves one value out of the material via resolveField (shared with
+//     VendToFile — the same static/session widening applies here).
 //  6. Builds the child's environment: the current process environment
 //     (os.Environ()), with envVar set to the vended value, REPLACING any
 //     existing entry of that name rather than appending a duplicate (see
@@ -130,7 +132,22 @@ func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []str
 		return ExitExecKeyMissing, nil
 	}
 
-	// Step 2: attestation round-trip.
+	// Step 2: resolve argv[0] the way a shell would — PATH lookup for a bare
+	// command name, or the path used as-is when it already contains a slash.
+	//
+	// Deliberately BEFORE the broker legs: this is the only failure that is
+	// local, free and deterministic, so checking it first means a typo'd command
+	// costs no attestation, no credential vend, and no entry in the broker's
+	// per-consumer audit log for a launch that was never going to happen. The
+	// audit log is a security record; keeping speculative reads out of it is
+	// worth more than the ordering is worth as a convenience.
+	argv0, lookErr := exec.LookPath(argv[0])
+	if lookErr != nil {
+		fmt.Fprintf(os.Stderr, "signet exec: command %q not found: %v\n", argv[0], lookErr)
+		return ExitExecCommandNotFound, nil
+	}
+
+	// Step 3: attestation round-trip.
 	bc, attestErr := attestFresh(s, brokerURL)
 	if attestErr != nil {
 		// Distinguish a broker rejection (a non-2xx HTTP response, carried as a
@@ -173,14 +190,6 @@ func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []str
 	if resolveErr != nil {
 		fmt.Fprintf(os.Stderr, "signet exec: credential %q: %v\n", credName, resolveErr)
 		return ExitExecUnusableMaterial, nil
-	}
-
-	// Step 5: resolve argv[0] the way a shell would — PATH lookup for a bare
-	// command name, or the path used as-is when it already contains a slash.
-	argv0, lookErr := exec.LookPath(argv[0])
-	if lookErr != nil {
-		fmt.Fprintf(os.Stderr, "signet exec: command %q not found: %v\n", argv[0], lookErr)
-		return ExitExecCommandNotFound, nil
 	}
 
 	// Step 6: build the child's environment.
