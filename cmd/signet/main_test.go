@@ -11,7 +11,7 @@ import (
 // TestHelpText verifies the help block mentions all subcommands.
 func TestHelpText(t *testing.T) {
 	text := helpText()
-	for _, sub := range []string{"enrol", "sign", "auth", "verify", "headers", "vend-to-file", "agent", "version", "doctor"} {
+	for _, sub := range []string{"enrol", "sign", "auth", "verify", "headers", "vend-to-file", "exec", "agent", "version", "doctor"} {
 		if !strings.Contains(text, sub) {
 			t.Errorf("helpText() does not mention %q", sub)
 		}
@@ -264,5 +264,101 @@ func TestParseFileMode(t *testing.T) {
 		if !strings.Contains(err.Error(), "out of range") {
 			t.Errorf("parseFileMode(%q) error = %q, want it to mention \"out of range\"", in, err.Error())
 		}
+	}
+}
+
+// TestRunExecFlagValidation pins the cmd-layer gate for `exec`: the missing
+// "--" separator, the missing-command-after-"--" case, and the required
+// (--broker/--credential/--env-var) checks must all fail fast (exit 1)
+// before any signer or network work happens.
+func TestRunExecFlagValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"missing -- entirely", []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--env-var", "MY_TOKEN"}},
+		{"missing command after --", []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--env-var", "MY_TOKEN", "--"}},
+		{"missing broker", []string{"--credential", "my-cred", "--env-var", "MY_TOKEN", "--", "true"}},
+		{"missing credential", []string{"--broker", "https://broker.internal", "--env-var", "MY_TOKEN", "--", "true"}},
+		{"missing env-var", []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--", "true"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := runExec(tc.args); got != 1 {
+				t.Errorf("runExec(%v) = %d, want 1", tc.args, got)
+			}
+		})
+	}
+}
+
+// TestRunExecMissingSeparatorMessage pins the missing-"--" refusal message
+// specifically, distinguishing it from every other exit-1 cause: a bare
+// exit 1 could equally mean a missing required flag, so the message is what
+// proves the RIGHT check fired.
+func TestRunExecMissingSeparatorMessage(t *testing.T) {
+	args := []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--env-var", "MY_TOKEN"}
+	stderr := captureStderr(t, func() {
+		runExec(args)
+	})
+	if !strings.Contains(stderr, "missing -- separator") {
+		t.Errorf("stderr = %q, want the missing -- separator refusal", stderr)
+	}
+}
+
+// TestRunExecMissingCommandMessage pins the missing-command refusal message
+// for the case where "--" is present but nothing follows it.
+func TestRunExecMissingCommandMessage(t *testing.T) {
+	args := []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--env-var", "MY_TOKEN", "--"}
+	stderr := captureStderr(t, func() {
+		runExec(args)
+	})
+	if !strings.Contains(stderr, "a command is required after --") {
+		t.Errorf("stderr = %q, want the missing-command refusal", stderr)
+	}
+}
+
+// TestRunExecHelpWithoutSeparator verifies `signet exec --help` (or -h) works
+// even with no "--" present — the help check must run before the
+// missing-separator refusal, or a caller could never discover the "--"
+// contract exists in the first place.
+func TestRunExecHelpWithoutSeparator(t *testing.T) {
+	for _, flagName := range []string{"--help", "-h"} {
+		t.Run(flagName, func(t *testing.T) {
+			var code int
+			out := captureStderr(t, func() {
+				code = runExec([]string{flagName})
+			})
+			if code != 0 {
+				t.Errorf("runExec([%q]) = %d, want 0 (help is not an error)", flagName, code)
+			}
+			if !strings.Contains(out, "--") {
+				t.Errorf("runExec(%q) help output = %q, want it to document the -- separator", flagName, out)
+			}
+		})
+	}
+}
+
+// TestRunExecFlagsAfterSeparatorNotParsedBySignet verifies that a flag-shaped
+// token after "--" (e.g. "--broker") is treated as part of the CHILD's argv,
+// never re-parsed by signet's own FlagSet. It drives this through the same
+// missing-command / required-flag gates as the other tests here: passing
+// "--broker" as the child's argv[0] must not be swallowed as a second
+// occurrence of signet's own --broker flag (which would either error
+// differently or silently override the first), so the run must get past
+// every cmd-layer validation check and fail for a different reason further
+// down (no hardware key enrolled, or an unreachable broker) — never for one
+// of the flag-validation messages pinned above.
+//
+// The broker URL is the same unreachable loopback address the sibling
+// key-missing tests use (127.0.0.1:0): it fails fast without a real network
+// call or a DNS lookup, and never actually needs to be reached, because this
+// test only cares that signet's OWN parsing was not re-triggered.
+func TestRunExecFlagsAfterSeparatorNotParsedBySignet(t *testing.T) {
+	args := []string{"--broker", "http://127.0.0.1:0", "--credential", "my-cred", "--env-var", "MY_TOKEN", "--", "--broker", "not-a-flag-here"}
+	stderr := captureStderr(t, func() {
+		runExec(args)
+	})
+	if strings.Contains(stderr, "missing -- separator") || strings.Contains(stderr, "a command is required after --") || strings.Contains(stderr, "--broker is required") {
+		t.Errorf("stderr = %q, want signet's own flag parsing to be untouched by the child's \"--broker\" argv[0]", stderr)
 	}
 }

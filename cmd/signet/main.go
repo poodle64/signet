@@ -28,11 +28,12 @@
 //	signet verify  [flags] --broker <url> [--credential <name>]
 //	signet headers [flags] --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--bare]
 //	signet vend-to-file [flags] --broker <url> [--field <name>] [--mode <octal>] [--print-shape] <name> <dest>
+//	signet exec    [flags] --broker <url> --credential <name> --env-var <NAME> [--field <name>] -- <command> [args...]
 //	signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 //	signet version
 //	signet doctor  [flags]
 //
-// Flags (enrol, sign, auth, verify, headers, vend-to-file, doctor):
+// Flags (enrol, sign, auth, verify, headers, vend-to-file, exec, doctor):
 //
 //	--backend   secure-enclave | tpm | piv   (default: auto-detect for the platform)
 //	--slot      9a | 9c | 9d | 9e | 82..95   (piv backend only; default: 9c)
@@ -76,6 +77,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "vend-to-file" {
 		os.Exit(runVendToFile(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "exec" {
+		os.Exit(runExec(os.Args[2:]))
 	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -422,6 +426,13 @@ func run(args []string) error {
 		// completeness.
 		return fmt.Errorf("use 'signet vend-to-file' directly; typed exit codes require os.Exit")
 
+	case "exec":
+		// Reached only if someone calls run("exec", ...) directly (e.g. in
+		// tests that go through run()). In practice main() short-circuits
+		// exec before run() is called, so this branch exists only for
+		// completeness.
+		return fmt.Errorf("use 'signet exec' directly; typed exit codes require os.Exit")
+
 	default:
 		return fmt.Errorf("unknown subcommand %q\n\n%s", args[0], helpText())
 	}
@@ -498,11 +509,12 @@ Subcommands:
   verify        Consumer pre-flight: attest and optionally probe a credential vend
   headers       Attest, vend a credential, and print one HTTP header (compact JSON, or --bare)
   vend-to-file  Attest, vend a credential, and write one field's value to a file
+  exec          Attest, vend a credential, set it as an env var, and exec a command
   agent         Own the hardware and sign on request over Unix sockets (serve mode)
   version       Print the signet version, platform, and Go runtime
   doctor        Probe each backend and report availability (--backend probes one)
 
-Flags (enrol, sign, auth, verify, headers, vend-to-file, doctor):
+Flags (enrol, sign, auth, verify, headers, vend-to-file, exec, doctor):
   --backend    secure-enclave | tpm | piv   (default: auto-detect)
   --slot       9a | 9c | 9d | 9e | 82..95   (piv only; 82..95 are hex retired slots; default: 9c)
   --identity   <name>                       (secure-enclave only; default: consumer)
@@ -540,6 +552,7 @@ Vend-to-file exit codes:
   5  credential not found — credential name absent from the catalogue
   6  unusable material — credential cannot be resolved to a single field's value
 
+` + execHelpBody() + `
 Agent (serve mode):
   signet agent --bind <socket>=<slot> [--bind ...] [--backend piv]
     One daemon owns the token and serves a Unix socket per binding. Each socket

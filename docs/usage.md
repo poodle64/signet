@@ -27,12 +27,13 @@ signet auth    [--backend <backend>] [--identity <name>] <broker-url>
 signet verify  --broker <url> [--credential <name>] [--backend <backend>] [--identity <name>]
 signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--backend <backend>] [--identity <name>]
 signet vend-to-file --broker <url> [--field <name>] [--mode <octal>] [--print-shape] [--backend <backend>] [--identity <name>] <name> <dest>
+signet exec    --broker <url> --credential <name> --env-var <NAME> [--field <name>] [--backend <backend>] [--identity <name>] -- <command> [args...]
 signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 signet doctor  [--backend <backend>]
 signet version
 ```
 
-`enrol`, `sign`, `auth`, `verify`, `headers`, `vend-to-file`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
+`enrol`, `sign`, `auth`, `verify`, `headers`, `vend-to-file`, `exec`, and `doctor` also accept `--agent <socket>` to sign via a running agent (see [agent](#agent)) instead of opening local hardware.
 
 ### enrol
 
@@ -265,6 +266,46 @@ $ signet vend-to-file --broker https://broker.example.internal --print-shape db-
 kind: static
 fields: username, password
 ```
+
+### exec
+
+```text
+signet exec --broker <url> --credential <name> --env-var <NAME> [--field <name>] [--backend <backend>] [--identity <name>] [--agent <socket>] -- <command> [args...]
+```
+
+`exec` runs the same attestation round-trip as `verify`, `headers`, and `vend-to-file`, then vends `--credential` from the broker, resolves one value out of it exactly the way `vend-to-file` does (see the field-resolution rules under [vend-to-file](#vend-to-file)), sets `--env-var` to that value in a **child process's** environment, and replaces the current process with `<command>` — so the value goes straight from the broker into the child's environment and never touches signet's own shell, an env var in the calling session, a file, or an LLM transcript.
+
+It exists for **stdio MCP servers** and any other child that reads a credential from its environment at start-up. `headers` solves the equivalent problem for an `http` MCP server's `headersHelper`; `vend-to-file` solves it for a consumer that reads a file; neither helps a stdio server, because Claude Code's `.mcp.json` has no `envHelper` equivalent — the credential has to be in the environment *before* the process is spawned. Without `exec`, the only option is a secret-shaped environment variable sitting in the calling session, inherited by every child process and readable by anything that can read that process's environment (e.g. `printenv`).
+
+The `--` terminator is required and separates signet's own flags from the child's: everything after it is `<command>`'s argv, untouched by signet's flag parser. Omitting `--`, or leaving nothing after it, is a usage error.
+
+`exec` replaces the current process with `<command>` via `syscall.Exec` (the `execve(2)` system call) rather than spawning a subprocess signet then waits on. That means there is no signet process left running that ever held the value in its own memory, no extra process sitting between Claude Code and the launched server, and the child's stdio and signal handling are exactly what they would have been had it been launched directly — which matters because a stdio MCP server speaks its protocol on file descriptors 0 and 1, and an intermediary process would have to proxy that traffic rather than simply becoming the process speaking it. **`exec` prints nothing to stdout on success** — unlike `headers` and `vend-to-file`, which each print one confirmation line — because stdout belongs to `<command>`'s own protocol from the moment it starts. The vended value is never placed in argv either, so it never appears in `ps` output; it exists only in the environment block handed to the child.
+
+`syscall.Exec` has no equivalent on Windows (there is no `execve()`); `exec` still builds there, but the launch step itself fails at runtime with an ordinary transport-style error. `exec` is unix-only in practice today.
+
+Every diagnostic and every failure message goes to stderr, and never contains the credential value or the minted attestation bearer, on the same terms as `headers` and `vend-to-file`.
+
+`exec` exits with a typed code:
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success — never actually observed: `syscall.Exec` replaces this process, so nothing is left to return a code. |
+| `1` | Unexpected transport, argument, or exec failure. |
+| `2` | Key missing — no key enrolled for this identity and backend. |
+| `3` | Attestation rejected — the broker refused the attestation (4xx). |
+| `4` | Credential out of scope — the identity is attested but the credential is not in its vend scope (403). |
+| `5` | Credential not found — the credential name is absent from the broker's catalogue (404). |
+| `6` | Unusable material — the credential cannot be resolved to a single field's value. |
+| `7` | Command not found — `<command>` could not be resolved to an executable via `PATH`. |
+
+Example — launch a stdio MCP server with a broker-vended token in its environment, without the token ever touching the calling shell:
+
+```text
+$ signet exec --broker https://broker.example.internal --credential github-pat \
+    --env-var GITHUB_PERSONAL_ACCESS_TOKEN -- github-mcp-server stdio
+```
+
+The `github-mcp-server` process starts with `GITHUB_PERSONAL_ACCESS_TOKEN` set in its own environment; nothing was printed and no `signet` process remains.
 
 ### doctor
 

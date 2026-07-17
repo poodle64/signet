@@ -138,13 +138,22 @@ signet vend-to-file --broker https://your-broker.example.internal example-api /e
 
 Nothing but a byte-count confirmation line ever reaches stdout; the credential value only ever lands in the destination file. See [Usage](docs/usage.md#vend-to-file) for `--field`, `--mode`, `--print-shape`, and the full exit-code reference.
 
+A **stdio** MCP server needs its credential in an environment variable *before* it even starts, and `.mcp.json` has no `envHelper` equivalent to `headersHelper`. `signet exec` closes that gap: it attests and vends the same way, sets the value as an environment variable on a child process, and replaces itself with that child — so the value goes straight from the broker into the child's own environment and never sits in the calling shell, an env var, or a file:
+
+```sh
+signet exec --broker https://your-broker.example.internal --credential github-pat \
+  --env-var GITHUB_PERSONAL_ACCESS_TOKEN -- github-mcp-server stdio
+```
+
+Nothing is printed on success — the child is about to speak its own protocol on stdout — and no signet process is left running: `exec` replaces itself with `<command>` (`syscall.Exec`) rather than spawning a subprocess it waits on. See [Usage](docs/usage.md#exec) for the `--` contract and the full exit-code reference.
+
 signet speaks the `/v1/attest` HTTP contract and nothing more; it is not coupled to any specific broker's business logic, and any secrets broker implementing the contract can consume it.
 
 ## Documentation
 
 | Guide | What it covers |
 | --- | --- |
-| [Usage](docs/usage.md) | All nine subcommands (enrol, sign, auth, verify, headers, vend-to-file, agent, doctor, version); wiring as a credential helper |
+| [Usage](docs/usage.md) | All ten subcommands (enrol, sign, auth, verify, headers, vend-to-file, exec, agent, doctor, version); wiring as a credential helper |
 | [Configuration](docs/configuration.md) | Flags (--backend, --slot, --identity), backend selection, and on-disk paths |
 | [Hardware backends](docs/backends.md) | The Secure Enclave, TPM, and PIV backends in depth |
 | [Building from source](docs/development/building.md) | The cgo build, the Swift shim, and the release toolchain |
