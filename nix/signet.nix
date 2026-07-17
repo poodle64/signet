@@ -24,7 +24,7 @@
   fetchurl,
 }:
 let
-  version = "2026.7.2";
+  version = "2026.7.3";
 
   # Per-platform artifact selection. cgo forces native per-platform builds, so each
   # system gets its own tarball. Platforms not yet built throw at evaluation time —
@@ -40,8 +40,8 @@ let
 
   # SRI hashes for the published release tarballs (nix store prefetch-file <url>).
   hashes = {
-    "darwin-arm64" = "sha256-JAA6L3An1y8CljC4RsDCEcTxcybuDbJPwRbNxXlZMW8=";
-    "linux-amd64" = "sha256-vXRPaQ9XHeVWs4KiVBLaxE/NhFVlF3gvhbFLELUt5xw=";
+    "darwin-arm64" = "sha256-zPcOXthtTHZlbwQNeL2PqVufPdXWofZHXegPVkwZ+m4=";
+    "linux-amd64" = "sha256-zKjbjW0mKAbXGFJnTl3dLL2yRbH2ijzjKIzeucTvZAI=";
   };
 
   src = fetchurl {
