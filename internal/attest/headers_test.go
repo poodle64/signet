@@ -275,6 +275,82 @@ func TestHeaders_BareNoPartialPrintOnFailure(t *testing.T) {
 	}
 }
 
+// TestHeaders_BareRefusesControlChars verifies --bare refuses a value carrying
+// a CR, LF, or NUL instead of printing it. Bare is the only unescaped output
+// path and exists to be interpolated into a header unquoted, so an embedded
+// CRLF is a header-injection vector and an embedded newline would break the
+// one-line contract --bare advertises. None may appear in an HTTP field value
+// (RFC 9110), so the material is unusable for this mode.
+//
+// The refusal must not echo the value: the diagnostic names the control
+// character only.
+func TestHeaders_BareRefusesControlChars(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string // as embedded in the broker's JSON body
+		wantMsg string
+	}{
+		{"newline", `good\nX-Injected: evil`, "a newline"},
+		{"carriage return", `good\r\nX-Injected: evil`, "a carriage return"},
+		{"nul", `good\u0000evil`, "a NUL byte"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setTempHome(t)
+			srv := headersBrokerWithCredBody(t, http.StatusOK,
+				`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"value","value":"`+tc.value+`"}]}}`)
+			defer srv.Close()
+
+			s := &stubSigner{sig: "c3R1YnNpZw=="}
+			var code int
+			stdout, stderr := captureHeadersOutput(t, func() {
+				code, _ = Headers(s, srv.URL, "my-cred", "Authorization", "raw", true)
+			})
+			if code != ExitHeadersUnusableMaterial {
+				t.Errorf("exit code = %d, want %d (ExitHeadersUnusableMaterial)", code, ExitHeadersUnusableMaterial)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty: the value must never be printed unescaped", stdout)
+			}
+			if !strings.Contains(stderr, tc.wantMsg) {
+				t.Errorf("stderr = %q, want it to name %q", stderr, tc.wantMsg)
+			}
+			if strings.Contains(stderr, "evil") {
+				t.Errorf("stderr = %q, leaked part of the credential value", stderr)
+			}
+		})
+	}
+}
+
+// TestHeaders_JSONAllowsControlChars pins the other half: the DEFAULT JSON
+// framing still accepts such a value, escaping it so the output stays one line.
+// That path is the pre-existing headersHelper contract and #5 requires it stay
+// wire-compatible, so the --bare guard must not leak into it. Asserting this
+// keeps the guard's scope honest rather than silently widening a refusal.
+func TestHeaders_JSONAllowsControlChars(t *testing.T) {
+	setTempHome(t)
+	srv := headersBrokerWithCredBody(t, http.StatusOK,
+		`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"value","value":"good\nvalue"}]}}`)
+	defer srv.Close()
+
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	var code int
+	stdout, _ := captureHeadersOutput(t, func() {
+		code, _ = Headers(s, srv.URL, "my-cred", "Authorization", "raw", false)
+	})
+	if code != ExitHeadersOK {
+		t.Errorf("exit code = %d, want %d (the JSON path is unchanged)", code, ExitHeadersOK)
+	}
+	// json.Marshal escapes the newline, so the emitted line stays one line.
+	want := `{"Authorization":"good\nvalue"}` + "\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	if strings.Count(stdout, "\n") != 1 {
+		t.Errorf("stdout = %q, want exactly one physical newline (the terminator)", stdout)
+	}
+}
+
 // TestHeaders_SessionKindRefused verifies exit code 6 when the vended
 // credential is `session` material, which headers cannot turn into a single
 // static header value.

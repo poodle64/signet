@@ -119,6 +119,7 @@ func runVerify(args []string) int {
 // with run()'s single error/exit-1 contract.
 func runHeaders(args []string) int {
 	fs := flag.NewFlagSet("headers", flag.ContinueOnError)
+	fs.Usage = headersUsage
 	backend, slot, identity, agentSock := signerFlags(fs)
 	broker := fs.String("broker", "", "broker URL (required)")
 	cred := fs.String("credential", "", "credential name to vend (required)")
@@ -155,7 +156,7 @@ func runHeaders(args []string) int {
 	// fs.Visit reports only flags actually set, so the "Authorization" default
 	// does not trip this.
 	if *bare && isFlagSet(fs, "header") {
-		fmt.Fprintln(os.Stderr, `error: signet headers: --header cannot be combined with --bare (--bare prints the value alone, with no header name); drop --header, or drop --bare to get {"<name>":"<value>"}`)
+		fmt.Fprintf(os.Stderr, "error: signet headers: --header cannot be combined with --bare (--bare prints the value alone, with no header name); drop --header, or drop --bare to get %s\n", jsonShapeExample(*header, *format))
 		return 1
 	}
 	s, err := selectSigner(*backend, *slot, *identity, *agentSock)
@@ -167,6 +168,19 @@ func runHeaders(args []string) int {
 	// here, or failures would print twice.
 	code, _ := attest.Headers(s, *broker, *cred, *header, *format, *bare)
 	return code
+}
+
+// jsonShapeExample renders the JSON shape the given --header/--format pair
+// would produce, for use in a diagnostic. It is derived from the actual flag
+// values rather than hardcoded, because the shape depends on --format: a
+// hardcoded {"<name>":"<value>"} is wrong under the default --format bearer,
+// which yields {"<name>":"Bearer <value>"}. Naming the wrong shape in an error
+// about output shapes is the defect this command was fixed for (#5).
+func jsonShapeExample(headerName, format string) string {
+	if format == "bearer" {
+		return fmt.Sprintf("{%q:\"Bearer <value>\"}", headerName)
+	}
+	return fmt.Sprintf("{%q:\"<value>\"}", headerName)
 }
 
 // isFlagSet reports whether name was explicitly passed on the command line,
@@ -418,6 +432,58 @@ func printHelp() {
 	fmt.Print(helpText())
 }
 
+// headersHelpBody returns the `headers` flag, output-shape, and exit-code
+// reference. It is the ONE copy: helpText embeds it for `signet --help`, and
+// runHeaders installs it as the FlagSet's Usage for `signet headers --help`.
+// Two hand-maintained copies would drift, and a drifting help text is the
+// defect this command was fixed for in the first place (#5).
+func headersHelpBody() string {
+	return `Headers flags:
+  --broker     <url>    broker URL (required)
+  --credential <name>   credential name to vend (required)
+  --header     <name>   HTTP header name to key the JSON object by (default: Authorization;
+                          cannot be combined with --bare, which prints no name)
+  --format     bearer | raw   value shape: "Bearer <value>" or <value> alone (default: bearer)
+  --bare                print the value alone, not a compact-JSON object
+
+Headers output shapes (--format shapes the value, --bare shapes the framing):
+  (default)             {"Authorization":"Bearer s3cr3t"}
+  --format raw          {"Authorization":"s3cr3t"}
+  --bare                Bearer s3cr3t
+  --bare --format raw   s3cr3t
+
+  The JSON shapes are the Claude Code .mcp.json headersHelper contract and are
+  the default. Use --bare for shell interpolation — a JSON-wrapped value inside
+  curl -H "Authorization: Bearer $v" builds a malformed header, which a broker
+  rejects as a 401 that looks exactly like a stale credential:
+    v=$(signet headers --broker <url> --credential <name> --bare --format raw)
+    curl -H "Authorization: Bearer $v" <url>
+
+Headers exit codes:
+  0  success — header line printed to stdout
+  2  key missing — no key enrolled for this identity
+  3  attestation rejected — broker refused the attestation
+  4  credential out of scope — identity exists but credential is not in its scope
+  5  credential not found — credential name absent from the catalogue
+  6  unusable material — credential is not a single-field static value
+
+`
+}
+
+// headersUsage is the FlagSet Usage for `signet headers`. flag prints Usage on
+// -h/--help and then returns ErrHelp, so without this the subcommand's help is
+// only flag's own bare list of flags — never the output shapes a caller needs
+// to see BEFORE interpolating stdout into a shell command.
+func headersUsage() {
+	fmt.Fprint(os.Stderr, `signet headers — attest, vend a credential, and print it as one HTTP header
+
+Usage:
+  signet headers --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--bare]
+
+`+headersHelpBody()+`Backend selection flags (--backend, --slot, --identity, --agent): signet --help
+`)
+}
+
 // helpText returns the structured help block listing all subcommands.
 func helpText() string {
 	return `signet — hardware machine-identity CLI
@@ -454,35 +520,7 @@ Verify exit codes:
   4  credential out of scope — identity exists but credential is not in its scope
   5  credential not found — credential name absent from the catalogue
 
-Headers flags:
-  --broker     <url>    broker URL (required)
-  --credential <name>   credential name to vend (required)
-  --header     <name>   HTTP header name to key the JSON object by (default: Authorization;
-                          cannot be combined with --bare, which prints no name)
-  --format     bearer | raw   value shape: "Bearer <value>" or <value> alone (default: bearer)
-  --bare                print the value alone, not a compact-JSON object
-
-Headers output shapes (--format shapes the value, --bare shapes the framing):
-  (default)             {"Authorization":"Bearer s3cr3t"}
-  --format raw          {"Authorization":"s3cr3t"}
-  --bare                Bearer s3cr3t
-  --bare --format raw   s3cr3t
-
-  The JSON shapes are the Claude Code .mcp.json headersHelper contract and are
-  the default. Use --bare for shell interpolation — a JSON-wrapped value inside
-  curl -H "Authorization: Bearer $v" builds a malformed header, which a broker
-  rejects as a 401 that looks exactly like a stale credential:
-    v=$(signet headers --broker <url> --credential <name> --bare --format raw)
-    curl -H "Authorization: Bearer $v" <url>
-
-Headers exit codes:
-  0  success — header line printed to stdout
-  2  key missing — no key enrolled for this identity
-  3  attestation rejected — broker refused the attestation
-  4  credential out of scope — identity exists but credential is not in its scope
-  5  credential not found — credential name absent from the catalogue
-  6  unusable material — credential is not a single-field static value
-
+` + headersHelpBody() + `
 Vend-to-file flags:
   signet vend-to-file [flags] <name> <dest>
   --broker      <url>    broker URL (required)

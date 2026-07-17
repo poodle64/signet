@@ -149,20 +149,50 @@ func TestIsFlagSet(t *testing.T) {
 	}
 }
 
-// TestHelpTextDocumentsHeadersOutputShapes pins issue #5's documentation half:
-// --help must show the output shape of every headers mode. The JSON shapes are
-// what a caller feeding stdout into `curl -H` needs to see BEFORE being
-// misled — a bare `--format raw` looks like it prints a bare value and does
-// not.
+// headersOutputShapeDocs are the strings issue #5 requires the help to show:
+// every mode's output shape, plus a worked interpolation example.
+var headersOutputShapeDocs = []string{
+	`{"Authorization":"Bearer s3cr3t"}`, // default
+	`{"Authorization":"s3cr3t"}`,        // --format raw
+	"Bearer s3cr3t",                     // --bare
+	"--bare --format raw",               // the bare-token mode
+	"curl -H",                           // the interpolation example
+}
+
+// TestRunHeadersHelpDocumentsOutputShapes pins issue #5's documentation half
+// against the LITERAL command its acceptance criterion names: `signet headers
+// --help`.
+//
+// It drives runHeaders rather than reading helpText(), because those are
+// different code paths and only this one is what a user actually runs. flag
+// prints the FlagSet's Usage and returns ErrHelp, so a subcommand with no
+// custom Usage shows only flag's bare list of flags — helpText() is never
+// reached. Asserting on helpText() therefore passes while `signet headers
+// --help` shows nothing of the sort: the criterion looks met and is not.
+func TestRunHeadersHelpDocumentsOutputShapes(t *testing.T) {
+	for _, flagName := range []string{"--help", "-h"} {
+		t.Run(flagName, func(t *testing.T) {
+			var code int
+			out := captureStderr(t, func() {
+				code = runHeaders([]string{flagName})
+			})
+			if code != 0 {
+				t.Errorf("runHeaders([%q]) = %d, want 0 (help is not an error)", flagName, code)
+			}
+			for _, shape := range headersOutputShapeDocs {
+				if !strings.Contains(out, shape) {
+					t.Errorf("`signet headers %s` does not document output shape %q", flagName, shape)
+				}
+			}
+		})
+	}
+}
+
+// TestHelpTextDocumentsHeadersOutputShapes pins the same shapes in the
+// top-level `signet --help`, which embeds the same single source.
 func TestHelpTextDocumentsHeadersOutputShapes(t *testing.T) {
 	text := helpText()
-	for _, shape := range []string{
-		`{"Authorization":"Bearer s3cr3t"}`, // default
-		`{"Authorization":"s3cr3t"}`,        // --format raw
-		"Bearer s3cr3t",                     // --bare
-		"--bare --format raw",               // the bare-token mode
-		"curl -H",                           // the interpolation example
-	} {
+	for _, shape := range headersOutputShapeDocs {
 		if !strings.Contains(text, shape) {
 			t.Errorf("helpText() does not document headers output shape %q", shape)
 		}

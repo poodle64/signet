@@ -37,9 +37,26 @@ const (
 	ExitHeadersCredNotFound = 5
 	// ExitHeadersUnusableMaterial means the vended credential cannot become a
 	// single header value: its material is not `static`, its envelope did not
-	// parse, or its static fields number zero or more than one.
+	// parse, its static fields number zero or more than one, or (under --bare
+	// only, the one unescaped output path) its value carries a CR, LF, or NUL,
+	// which no HTTP header value may contain.
 	ExitHeadersUnusableMaterial = 6
 )
+
+// controlCharName names a control character for a diagnostic, so a refusal can
+// say which one was found without echoing any part of the credential value.
+func controlCharName(c byte) string {
+	switch c {
+	case '\r':
+		return "a carriage return"
+	case '\n':
+		return "a newline"
+	case 0:
+		return "a NUL byte"
+	default:
+		return "a control character"
+	}
+}
 
 // Headers is the vend-to-headers entry point. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
@@ -139,7 +156,21 @@ func Headers(s signer.Signer, brokerURL, credName, headerName, format string, ba
 	// Bare framing: the value alone, terminated by exactly one newline and
 	// nothing else, so `$(signet headers --bare)` captures precisely the value
 	// (command substitution strips the trailing newline).
+	//
+	// A value carrying CR, LF, or NUL is refused here rather than printed. Bare
+	// is the one output path with no escaping — the JSON framing escapes such a
+	// value and stays one line — and it exists precisely to be interpolated
+	// into a header unquoted, so an embedded CRLF is a header-injection and
+	// request-splitting vector, and an embedded newline would silently break
+	// the one-line contract above. RFC 9110 admits none of these in a field
+	// value, so such material genuinely cannot become one header value, which
+	// is exactly what ExitHeadersUnusableMaterial means. The refusal names the
+	// offending control character, never the value.
 	if bare {
+		if i := strings.IndexAny(headerValue, "\r\n\x00"); i >= 0 {
+			fmt.Fprintf(os.Stderr, "signet headers: credential %q: unusable material (value contains %s, which cannot appear in an HTTP header value; --bare prints it unescaped)\n", credName, controlCharName(headerValue[i]))
+			return ExitHeadersUnusableMaterial, nil
+		}
 		fmt.Println(headerValue)
 		return ExitHeadersOK, nil
 	}

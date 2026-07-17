@@ -170,6 +170,8 @@ The JSON framings are the `headersHelper` contract and remain the default. Reach
 
 `--header` names the JSON key, so it has no meaning under `--bare` (which prints no key). Combining them is refused rather than silently ignored.
 
+Under `--bare` only, a credential whose value contains a carriage return, newline, or NUL byte is refused as unusable material (exit `6`) rather than printed. `--bare` is the one output path with no escaping, and it exists to be interpolated into a header unquoted, so an embedded CRLF would be a header-injection vector and an embedded newline would break the single-line output `--bare` promises; no HTTP field value may contain these in any case. The default JSON framing escapes such a value instead, and is unchanged.
+
 The credential value only ever lands on stdout, as the one line `headers` prints on success. Every diagnostic and every failure message goes to stderr instead, and never contains the credential value or the minted attestation bearer: on failure the message names only the failure class (key missing, broker rejection, out of scope, not found, or the shape of the unusable material), so a `headersHelper` invocation that fails never leaks a secret into a log capturing stderr.
 
 `headers` exits with a typed code:
