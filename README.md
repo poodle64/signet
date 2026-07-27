@@ -18,13 +18,13 @@ A machine that needs secrets has to prove it is itself before a broker will hand
 
 signet is a single self-contained Go binary that implements this pattern across the three secure-hardware substrates a real fleet actually has:
 
-- **Apple Secure Enclave** — auto-detected on macOS
-- **TPM 2.0** — auto-detected on Linux and Windows with a reachable TPM device
-- **YubiKey / PIV token** — cross-platform fallback, or explicit with `--backend piv`
+- **Apple Secure Enclave**: auto-detected on macOS
+- **TPM 2.0**: auto-detected on Linux and Windows with a reachable TPM device
+- **YubiKey / PIV token**: cross-platform fallback, or explicit with `--backend piv`
 
 The backends are compiled in and selected at runtime; switching hardware is a one-flag change, not a migration. The private key never leaves the hardware. The only thing on disk is a short-lived bearer cache and, on macOS, the Enclave's own opaque key blob (useless if copied off the machine).
 
-signet acts as a standard credential helper — the same shape as `git credential`, `docker-credential-*`, and AWS `credential_process`. A consumer shells out for a fresh `Authorization` header on demand; signet produces it and exits. For workloads that cannot reach the hardware at all (a container with no path to the YubiKey), the `agent` subcommand runs one daemon that owns the token and signs for socket clients on request — the `ssh-agent` pattern — while every other subcommand stays single-shot.
+signet acts as a standard credential helper, the same shape as `git credential`, `docker-credential-*`, and AWS `credential_process`. A consumer shells out for a fresh `Authorization` header on demand; signet produces it and exits. For workloads that cannot reach the hardware at all (a container with no path to the YubiKey), the `agent` subcommand runs one daemon that owns the token and signs for socket clients on request — the `ssh-agent` pattern — while every other subcommand stays single-shot.
 
 This is the same pattern AWS ships as IAM Roles Anywhere, generalised across the three secure-hardware substrates a heterogeneous fleet actually has.
 
@@ -114,7 +114,7 @@ Wire `signet auth` as the `headersHelper` in a Claude Code MCP config, or as any
 
 To use a specific backend: `signet auth --backend piv https://your-broker.example.internal`
 
-`auth` prints signet's own attestation bearer — the credential that proves *this machine's* identity to the broker. Some hosted servers instead expect a **broker-vended credential**, a separate secret the broker holds on the consumer's behalf (a hosted API's bearer, an upstream service token), as their `Authorization` header. For that case wire `signet headers` instead: it attests the same way `auth` does, then vends the named credential and prints it as the header:
+`auth` prints signet's own attestation bearer: the credential that proves *this machine's* identity to the broker. Some hosted servers instead expect a **broker-vended credential**, a separate secret the broker holds on the consumer's behalf (a hosted API's bearer, an upstream service token), as their `Authorization` header. For that case wire `signet headers` instead: it attests the same way `auth` does, then vends the named credential and prints it as the header:
 
 ```json
 {
@@ -128,9 +128,9 @@ To use a specific backend: `signet auth --backend piv https://your-broker.exampl
 }
 ```
 
-`--header` and `--format` control the emitted JSON key and value wrapping (default `Authorization` / `bearer`), and `--bare` drops the JSON framing to print the value alone — the shape to interpolate into `curl -H`, since a JSON-wrapped value builds a malformed header and earns a 401 that looks just like a stale credential. See [Usage](docs/usage.md#headers) for the full flag and exit-code reference.
+`--header` and `--format` control the emitted JSON key and value wrapping (default `Authorization` / `bearer`), and `--bare` drops the JSON framing to print the value alone; the shape to interpolate into `curl -H`, since a JSON-wrapped value builds a malformed header and earns a 401 that looks just like a stale credential. See [Usage](docs/usage.md#headers) for the full flag and exit-code reference.
 
-Some consumers need the vended credential written to a **file** instead of an HTTP header — an agent placing a value at a destination (a `.env`, an `.envrc.local`, a stack secret sink) without it ever passing through a shell pipeline or an LLM transcript. `signet vend-to-file` attests the same way, then writes one field's value straight to disk, atomically, at mode `0600` by default:
+Some consumers need the vended credential written to a **file** instead of an HTTP header: an agent placing a value at a destination (a `.env`, an `.envrc.local`, a stack secret sink) without it ever passing through a shell pipeline or an LLM transcript. `signet vend-to-file` attests the same way, then writes one field's value straight to disk, atomically, at mode `0600` by default:
 
 ```sh
 signet vend-to-file --broker https://your-broker.example.internal example-api /etc/myapp/token
@@ -138,7 +138,7 @@ signet vend-to-file --broker https://your-broker.example.internal example-api /e
 
 Nothing but a byte-count confirmation line ever reaches stdout; the credential value only ever lands in the destination file. See [Usage](docs/usage.md#vend-to-file) for `--field`, `--mode`, `--print-shape`, and the full exit-code reference.
 
-A **stdio** MCP server needs its credential in an environment variable *before* it even starts, and `.mcp.json` has no `envHelper` equivalent to `headersHelper`. `signet exec` closes that gap: it attests and vends the same way, sets the value as an environment variable on a child process, and replaces itself with that child — so the value goes straight from the broker into the child's own environment and never sits in the calling shell, an env var, or a file:
+A **stdio** MCP server needs its credential in an environment variable *before* it even starts, and `.mcp.json` has no `envHelper` equivalent to `headersHelper`. `signet exec` closes that gap: it attests and vends the same way, sets the value as an environment variable on a child process, and replaces itself with that child, so the value goes straight from the broker into the child's own environment and never sits in the calling shell, an env var, or a file:
 
 ```sh
 signet exec --broker https://your-broker.example.internal --credential github-pat \
