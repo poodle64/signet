@@ -5,7 +5,7 @@ paths:
 
 # Signet Attest Boundary
 
-signet is the machine-identity client of exactly one broker's attestation contract. This file is a per-repo amendment of the household master rule `rules-library/ai/sidekick-tooling.md`: it carries the **attestation-client corollary** of that rule's broker-black-box invariant. The broker implementation carries the verification side in a boundary rule of its own repository. The line both sides defend is the same one: signet proves possession of a hardware key, and every authorisation decision stays on the broker.
+signet is the machine-identity client of exactly one broker's attestation contract. This file is a per-repo amendment of the household master rule `rules-library/sidekick/sidekick-tooling.md`: it carries the **attestation-client corollary** of that rule's broker-black-box invariant. The broker implementation carries the verification side in a boundary rule of its own repository. The line both sides defend is the same one: signet proves possession of a hardware key, and every authorisation decision stays on the broker.
 
 - Must follow `rules-library/core/00-rules-approach.md` §"Changing a rule or strategy" for shared-governance edits: as the attestation-client SME you may make a targeted, well-reasoned change to a shared sidekick-tooling invariant directly (recording why in the commit); raise an issue on `poodle64/master-project` for sweeping, cross-domain, or contentious changes. Must NOT weaken an invariant the broker side depends on without flagging it.
 
@@ -62,5 +62,5 @@ signet `auth` is a credential helper of the same shape as `git credential`, `doc
 
 - `20-key-custody.md`: the hardware-key custody invariants that back the proof this boundary relies on.
 - `00-project-foundations.md`: project scope, architecture, and non-negotiable constraints.
-- Master rule amended here: `rules-library/ai/sidekick-tooling.md` (the attestation-client corollary of the broker-black-box invariant).
+- Master rule amended here: `rules-library/sidekick/sidekick-tooling.md` (the attestation-client corollary of the broker-black-box invariant).
 - Broker-side counterpart: the boundary rule in the broker implementation's own repository.
