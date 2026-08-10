@@ -1,61 +1,46 @@
 ---
 paths:
-  - '**/*'
+  - '**/internal/signer/**'
+  - '**/internal/agent/**'
+  - '**/internal/datadir/**'
+  - '**/internal/attest/cache.go'
+  - '**/cmd/signet/**'
 ---
 
 # Signet Key Custody
 
-A non-exportable signing key sealed in secure hardware is signet's entire reason to exist: there is nothing on disk, in an env var, or in a config file for a stolen laptop image or a leaked `.env` to give away. The invariants below protect that one guarantee. They go beyond the universal secret-handling rules (`core/21-secret-handling.md`, which forbid reading secret VALUES into a transcript) and the supply-chain rules in `security/`: this rule governs how signet's signing key is **born, held, and never degraded**, which those rules do not cover.
+A non-exportable signing key sealed in secure hardware is signet's entire reason to exist: nothing on disk, in an env var, or in a config file for a stolen laptop image or a leaked `.env` to give away. These invariants govern how that key is **born, held, and never degraded** — going beyond `core/secret-handling.md` (no secret VALUES in a transcript) and `core/supply-chain.md`, which do not cover it.
 
-## 1. The signing key is hardware-born and non-exportable
+## 1. Hardware-born, non-exportable
 
-The signing key is generated inside secure hardware and never leaves it. On macOS the Secure Enclave returns an opaque, hardware-wrapped blob and the private scalar never enters process memory (`Enrol` in `internal/signer/enclave_darwin.go`); TPM and PIV keep the key at a fixed handle / on the token. signet only ever moves the **public** half (SPKI DER, base64, via `marshalSPKI` in the same file) and signatures. The agent daemon extends the same guarantee across a socket: it exposes only `pubkey` and `sign` ops (`internal/agent/server.go`), so a socket client can obtain proofs but never key material. The private key must never be written to a file, an env var, a log, or argv, because no code path is allowed to hold it in the first place.
+The key is generated inside secure hardware and never leaves it: the SE returns an opaque, hardware-wrapped blob and the private scalar never enters process memory (`Enrol`, `internal/signer/enclave_darwin.go`); TPM and PIV keep it at a fixed handle / on the token. signet moves only the **public** half (SPKI DER, base64, via `marshalSPKI`) and signatures. The agent extends the same guarantee across a socket — pubkey/sign ops only (`internal/agent/server.go`).
 
-- Must NOT add any code that exports, serialises, copies, or logs the private signing key; the only artefacts that leave the backend are the public key and a signature.
+- Must NOT add code that exports, serialises, copies, or logs the private key; only the public key and a signature leave a backend, and no code path may hold the private key in a file, env var, log, or argv.
 
 ## 2. No software-key fallback, ever
 
-A host with no secure hardware fails loudly; it never degrades to a key on disk. `New` and `autoDetect` (`internal/signer/signer.go`) resolve to exactly one of the three hardware backends or return an error; there is deliberately no software path. This is the difference between "this identity is hardware-rooted" being **always true** and being **sometimes true**: a single software-fallback branch silently turns the guarantee into a lie on the one host that took the fallback.
+`New` and `autoDetect` (`internal/signer/signer.go`) resolve to exactly one hardware backend or return an error — there is deliberately no software path. A single software-fallback branch silently turns "this identity is hardware-rooted" from always-true into sometimes-true on the one host that took the fallback.
 
-- Must NOT add a software-key, file-key, or in-memory-key backend, nor a "degraded mode" that signs without secure hardware. Absent hardware is a hard failure, by design.
-- Must keep backend selection resolving to a hardware backend or an error; never to a software signer.
+- Must NOT add a software-, file-, or in-memory-key backend, or a "degraded mode" that signs without secure hardware. Absent hardware is a hard failure by design; backend selection resolves to a hardware backend or an error, never a software signer.
 
 ## 3. The only permitted on-disk state
 
-signet persists exactly two kinds of file, and no third is permitted:
+Exactly two files, no third: the short-lived **bearer cache** under `~/.signet/cache/` (mode 0600, atomic write, keyed by broker URL **and** the enrolled key's fingerprint — 16 hex of SHA-256(SPKI DER); `internal/attest/cache.go`), and on macOS the **opaque Secure-Enclave blob** at `~/.signet/se-<identity>.key` (mode 0600 under a 0700 dir; `blobPath`/`writeKeyBlob`, `internal/signer/enclave_darwin.go`), which is machine-bound and useless if copied. TPM and PIV write no key file. Deleting the cache simply forces a re-attest.
 
-1. the short-lived **bearer cache** under `~/.signet/cache/` (mode 0600, atomic write, keyed by broker URL **and** the enrolled key's fingerprint — 16 hex chars of SHA-256(SPKI DER); `internal/attest/cache.go`); deleting it simply forces a re-attest, and
-2. on macOS, the **opaque Secure-Enclave key blob** at `~/.signet/se-<identity>.key` (mode 0600 under a 0700 dir; `blobPath` and `writeKeyBlob` in `internal/signer/enclave_darwin.go`), which is machine-bound and useless if copied to another Mac.
-
-The bearer cache is the only token state signet keeps; there is no long-lived secret on disk. TPM and PIV write no key file at all (the key lives in the hardware).
-
-- Must NOT add a new on-disk artefact that holds secret material; the bearer cache and the opaque SE blob are the complete, deliberate inventory.
-- Must keep both at mode 0600 under a 0700 directory and the cache keyed by broker URL AND the enrolled key's fingerprint, so re-enrolling a new key never serves a stale bearer minted for the old one.
+- Must NOT add an on-disk artefact holding secret material beyond these two. Must keep both at mode 0600 under a 0700 directory, and the cache keyed by broker URL AND the enrolled key's fingerprint, so re-enrolling a new key never serves a bearer minted for the old one.
 
 ## 4. The macOS backend stays keychain-free
 
-The Secure Enclave backend stores its wrapped key blob in a file signet owns and never touches the keychain (`internal/signer/enclave_darwin.go`). This is the whole trick: persisting an SE key reference in the keychain needs the `com.apple.application-identifier` entitlement (an Apple-team code signature) and fails on an unsigned binary with `-34018 errSecMissingEntitlement`, whereas the self-stored-blob path needs no entitlement and no code signature. Moving to the keychain would break signet on every unsigned, ad-hoc binary the household builds with `make build`.
+The SE backend stores its wrapped blob in a file signet owns and never touches the keychain (`internal/signer/enclave_darwin.go`). Persisting an SE key reference in the keychain needs the `com.apple.application-identifier` entitlement (an Apple-team signature) and fails on an unsigned binary with `-34018 errSecMissingEntitlement`; the self-stored-blob path needs neither, so signet runs on the unsigned, ad-hoc binaries `make build` produces.
 
-- Must NOT migrate the Secure Enclave backend to keychain-backed key storage; keep the self-stored-blob model so signet runs on an unsigned, ad-hoc binary with no entitlement or notarisation.
+- Must NOT migrate the SE backend to keychain-backed storage; keep the self-stored-blob model.
 
 ## 5. Enrolment is operator-mediated, not trust-on-first-use
 
-Enrolment is a deliberate act: `signet enrol` prints the public key (`cmd/signet/main.go`) and the operator pastes it into the broker. signet never auto-registers a new key with the broker on first contact. `Enrol` is idempotent and non-destructive; an existing key is read and returned, never clobbered (`internal/signer/enclave_darwin.go`), so re-running it cannot silently mint a second identity. The agent has no enrol op at all — an `enrol --agent` invocation only reads the slot's existing public key. The broker trusts a public key because the operator enrolled it, not because signet presented it.
+`signet enrol` prints the public key (`cmd/signet/main.go`) and the operator pastes it into the broker; signet never auto-registers on first contact. `Enrol` is idempotent and non-destructive — an existing key is read and returned, never clobbered — so re-running cannot silently mint a second identity. The agent has no enrol op; `enrol --agent` only reads the slot's existing public key.
 
-- Must keep `enrol` print-only and non-destructive; must NOT add a path where signet registers its public key with the broker automatically or overwrites an existing hardware key.
-
-## Invariants
-
-- Must keep the signing key hardware-born and non-exportable; it must NEVER be written to a file, env var, log, or argv, and no code path may hold the private key.
-- Must NOT add a software-key fallback or degraded signing mode; a host without secure hardware fails loudly so "hardware-rooted" is never sometimes-false.
-- Must keep the permitted on-disk state to exactly the short-lived bearer cache plus (macOS) the opaque, machine-bound Secure-Enclave blob; must NOT add a third secret-bearing artefact.
-- Must keep both at mode 0600 under a 0700 directory and the cache keyed by broker URL AND the enrolled key's fingerprint.
-- Must keep the macOS backend keychain-free (self-stored-blob model) so it works on an unsigned, ad-hoc binary; the keychain path needs an entitlement and fails -34018.
-- Must keep enrolment operator-mediated and `enrol` non-destructive; must NOT add trust-on-first-use or auto-registration.
+- Must keep `enrol` print-only and non-destructive; must NOT add auto-registration with the broker or trust-on-first-use.
 
 ## See also
 
-- `15-attest-boundary.md`: the broker contract this hardware proof feeds into.
-- `00-project-foundations.md`: project scope, architecture, and non-negotiable constraints.
-- `core/21-secret-handling.md`: the universal no-secret-in-transcript rule this custody rule sits above.
-- `security/`: supply-chain and authentication standards (release pinning, dependency hygiene).
+- `15-attest-boundary.md`: the broker contract this hardware proof feeds.
