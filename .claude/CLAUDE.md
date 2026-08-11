@@ -26,3 +26,7 @@ make test    # CGO_ENABLED=1 go test ./...
 
 - **Broker contract**: the `/v1/attest` HTTP API (any broker implementing it). Household attestation architecture: `docs/master/governance/secrets/`.
 - **Architecture, backends, config, usage**: `docs/backends.md`, `docs/configuration.md`, `docs/usage.md`. Product intent (gitignored): `docs/product/`.
+
+## CI deviations from the household standard
+
+- **No `auto-label-issues` caller.** `rules-library/core/ci-workflow-standard.md` requires every repo to delegate issue auto-labelling to the master-project reusable, and permits a public repo that cannot resolve it to omit the caller provided the omission is recorded. signet is public and `poodle64/master-project` is private, so the reusable is unresolvable here; labels are applied at creation time by the `/git-issue` skill instead. Recorded 2026-08-11 — the omission was correct but had never been written down, which the umbrella rule treats as a defect in its own right.
