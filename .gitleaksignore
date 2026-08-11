@@ -1,0 +1,13 @@
+# Verified false positives, each checked by hand before being pinned here.
+# A fingerprint is commit:file:rule:line — pinned from a GIT-MODE scan, so it
+# matches only a history scan, never a --no-git working-tree scan.
+
+# docs/usage.md line 186 is a row in the `signet headers` EXIT CODE table,
+# sitting between the rows for codes 3 and 5. It describes a failure class; it
+# is not a credential and never was. gitleaks' generic-api-key rule matched on
+# entropy alone (3.69) in ordinary documentation prose. Verified 2026-08-11 by
+# reading the surrounding table rather than the matched value.
+# The genuine credential-shaped strings in this file (e.g. the
+# `sk_live_abc123...` placeholder in the worked example below it) are obvious
+# fakes and gitleaks correctly ignores them.
+03d598df84e26bb44dbed9482c8a74a46049e442:docs/usage.md:generic-api-key:186
