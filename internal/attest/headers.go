@@ -62,8 +62,11 @@ func controlCharName(c byte) string {
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
 //  2. Runs the attestation round-trip via attestFresh.
 //  3. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
-//  4. Requires the result to be `static` material with exactly one field, and
-//     prints it as the ONLY line written to stdout.
+//  4. Resolves the one value the header carries — a single `static` field, or
+//     a `session`'s access_token — and prints it as the ONLY line written to
+//     stdout. Resolution is shared with vend-to-file and exec (resolveField),
+//     so a `produced` credential (an OAuth bearer the broker mints and renews)
+//     works over a headersHelper exactly as a static API key does.
 //
 // Two independent axes shape that line. `format` shapes the VALUE: "bearer"
 // (the default) prefixes "Bearer ", "raw" leaves the value alone. `bare`
@@ -132,21 +135,27 @@ func Headers(s signer.Signer, brokerURL, credName, headerName, format string, ba
 		return 1, fmt.Errorf("unexpected broker %d on credential vend", status)
 	}
 
-	// Step 4: the material must be a single-field static value.
+	// Step 4: resolve the one value this header carries — a single static
+	// field, or a session's access_token.
+	//
+	// Session material was refused here until 2026-08-13, while vend-to-file
+	// and exec had already been widened to accept it (resolveField, whose
+	// docstring names this narrower assumption). That gap made the whole
+	// `produced` credential class unreachable over a headersHelper: a broker
+	// that had minted a perfectly good OAuth bearer answered `unusable
+	// material (kind "session", want static)`, which reads as a broken
+	// credential rather than a missing feature in the caller.
 	var env credentialEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
 		fmt.Fprintf(os.Stderr, "signet headers: credential %q: unusable material (envelope did not parse)\n", credName)
 		return ExitHeadersUnusableMaterial, nil
 	}
-	if env.Material.Kind != "static" {
-		fmt.Fprintf(os.Stderr, "signet headers: credential %q: unusable material (kind %q, want static)\n", credName, env.Material.Kind)
+	value, resolveErr := resolveField(env.Material, "")
+	if resolveErr != nil {
+		// resolveField's messages name the shape and never a value.
+		fmt.Fprintf(os.Stderr, "signet headers: credential %q: %v\n", credName, resolveErr)
 		return ExitHeadersUnusableMaterial, nil
 	}
-	if len(env.Material.Fields) != 1 {
-		fmt.Fprintf(os.Stderr, "signet headers: credential %q: unusable material (%d static fields, want exactly 1)\n", credName, len(env.Material.Fields))
-		return ExitHeadersUnusableMaterial, nil
-	}
-	value := env.Material.Fields[0].Value
 
 	// Step 5: format and print — the only line written to stdout.
 	headerValue := value

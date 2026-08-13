@@ -255,8 +255,10 @@ func TestHeaders_BareIgnoresHeaderName(t *testing.T) {
 // empty string rather than a diagnostic fragment.
 func TestHeaders_BareNoPartialPrintOnFailure(t *testing.T) {
 	setTempHome(t)
+	// Multi-field static, not a session: session material became usable on
+	// 2026-08-13, so it no longer exercises the failure path this test is about.
 	srv := headersBrokerWithCredBody(t, http.StatusOK,
-		`{"name":"my-cred","material":{"kind":"session","access_token":"SUPERSECRETSESSIONVALUE"}}`)
+		`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"a","value":"SUPERSECRETSESSIONVALUE"},{"name":"b","value":"SUPERSECRETSESSIONVALUE2"}]}}`)
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
@@ -351,22 +353,64 @@ func TestHeaders_JSONAllowsControlChars(t *testing.T) {
 	}
 }
 
-// TestHeaders_SessionKindRefused verifies exit code 6 when the vended
-// credential is `session` material, which headers cannot turn into a single
-// static header value.
-func TestHeaders_SessionKindRefused(t *testing.T) {
+// TestHeaders_SessionAccessToken verifies a `session` credential carrying an
+// access_token emits the header, exactly as a single static field does. This
+// is the `produced` class — an OAuth bearer the broker mints and renews — and
+// it was refused here until 2026-08-13 while vend-to-file already accepted it,
+// which made the whole class unreachable over a headersHelper.
+func TestHeaders_SessionAccessToken(t *testing.T) {
 	setTempHome(t)
 	srv := headersBrokerWithCredBody(t, http.StatusOK,
 		`{"name":"my-cred","material":{"kind":"session","access_token":"livebearer"}}`)
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
+	var code int
+	var err error
+	stdout, stderr := captureHeadersOutput(t, func() {
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
+	})
+	if err != nil {
+		t.Fatalf("Headers: %v", err)
+	}
+	if code != ExitHeadersOK {
+		t.Errorf("exit code = %d, want %d (ExitHeadersOK)", code, ExitHeadersOK)
+	}
+	want := `{"Authorization":"Bearer livebearer"}` + "\n"
+	if stdout != want {
+		t.Errorf("stdout = %q, want %q", stdout, want)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want empty on success", stderr)
+	}
+}
+
+// TestHeaders_SessionWithoutAccessTokenRefused verifies exit code 6 for a
+// cookie-only session: a normal, expected shape that carries no bearer, so
+// there is nothing to put in a header and guessing at a cookie is not the job.
+func TestHeaders_SessionWithoutAccessTokenRefused(t *testing.T) {
+	setTempHome(t)
+	srv := headersBrokerWithCredBody(t, http.StatusOK,
+		`{"name":"my-cred","material":{"kind":"session","cookies":[{"name":"sid","value":"SECRETCOOKIE"}]}}`)
+	defer srv.Close()
+
+	s := &stubSigner{sig: "c3R1YnNpZw=="}
+	var code int
+	var err error
+	stdout, stderr := captureHeadersOutput(t, func() {
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
+	})
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitHeadersUnusableMaterial {
 		t.Errorf("exit code = %d, want %d (ExitHeadersUnusableMaterial)", code, ExitHeadersUnusableMaterial)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty on failure", stdout)
+	}
+	if strings.Contains(stderr, "SECRETCOOKIE") {
+		t.Errorf("stderr leaked a credential value: %q", stderr)
 	}
 }
 
@@ -496,8 +540,10 @@ func TestHeaders_AttestRejected(t *testing.T) {
 // purpose), but every diagnostic and failure path must stay silent about it.
 func TestHeaders_NoSecretInStderr(t *testing.T) {
 	setTempHome(t)
+	// Multi-field static, not a session: session material became usable on
+	// 2026-08-13, so it no longer reaches the diagnostic path under test.
 	srv := headersBrokerWithCredBody(t, http.StatusOK,
-		`{"name":"my-cred","material":{"kind":"session","access_token":"SUPERSECRETSESSIONVALUE"}}`)
+		`{"name":"my-cred","material":{"kind":"static","fields":[{"name":"a","value":"SUPERSECRETSESSIONVALUE"},{"name":"b","value":"SUPERSECRETSESSIONVALUE2"}]}}`)
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}

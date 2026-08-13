@@ -476,7 +476,8 @@ Headers exit codes:
   3  attestation rejected — broker refused the attestation
   4  credential out of scope — identity exists but credential is not in its scope
   5  credential not found — credential name absent from the catalogue
-  6  unusable material — credential is not a single-field static value
+  6  unusable material — credential resolves to no single value (not one
+     static field, and not a session carrying an access_token)
 
 `
 }
