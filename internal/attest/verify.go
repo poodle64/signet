@@ -59,7 +59,7 @@ func brokerGet(endpoint, bearerKey string) (int, []byte, error) {
 
 // Verify performs the consumer pre-flight check. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
-//  2. Runs the attestation round-trip via attestFresh.
+//  2. Resolves a bearer via the shared cache path (bearer).
 //  3. If credName is non-empty, probes GET /v1/credentials/{credName} with the
 //     minted bearer and classifies the response.
 //
@@ -78,8 +78,8 @@ func Verify(s signer.Signer, brokerURL, credName string) (exitCode int, err erro
 	}
 	fmt.Printf("  key              OK             key present\n")
 
-	// Step 2: attestation round-trip.
-	bc, attestErr := attestFresh(s, brokerURL)
+	// Step 2: a live bearer — cached where one is healthy, attested where not.
+	bc, attestErr := bearer(s, brokerURL)
 	if attestErr != nil {
 		// Distinguish a broker rejection (a non-2xx HTTP response, carried as a
 		// *BrokerError anywhere in the wrap chain) from a transport error.

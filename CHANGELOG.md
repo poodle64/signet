@@ -4,6 +4,12 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [2026.8.1] - 2026-08-14
+
+### Fixed
+
+- Every subcommand now resolves its bearer through the disk cache, single-flighted across processes. Only `auth` consulted the cache; `headers`, `exec`, `vend-to-file` and `verify` each called `attestFresh` directly, so every invocation cost a full three-leg attestation (challenge, hardware signature, token) no matter how recently one had been minted. That is invisible for a lone credential helper and severe for the shape signet is actually deployed in: a Claude Code session starts every gate-served MCP server at once, and each runs its own `headersHelper` process. Measured on a 26-server project — 26 concurrent attestations, a median 12s and a worst case of 29s to return one header, and the broker correctly shedding load with `429 rate_limited` on `attest/challenge` and 401s on `attest/token`. Claude Code reported the resulting failures as `Incompatible auth server: does not support dynamic client registration` against every server in the project, which points at OAuth discovery and not at the credential helper, so the real cause survived several sessions. A warm cache now costs zero broker round-trips, a bearer inside the 30-minute renew window takes the one-round-trip renew leg, and concurrent callers finding a cold cache produce ONE attestation between them (an advisory `flock` on the cache file itself — no third on-disk artefact, per key custody). Locking is an optimisation, never a correctness gate: a caller that cannot take the lock still proceeds, so a platform without `flock` degrades to the previous behaviour rather than blocking.
+
 ## [2026.8.0] - 2026-08-13
 
 ### Fixed

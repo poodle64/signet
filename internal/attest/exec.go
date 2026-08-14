@@ -71,7 +71,7 @@ const (
 //     find it, rather than only a path containing a slash. This runs before
 //     the broker legs so a typo'd command spends no vend and leaves no
 //     speculative entry in the broker's audit log.
-//  3. Runs the attestation round-trip via attestFresh.
+//  3. Resolves a bearer via the shared cache path (bearer).
 //  4. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
 //  5. Resolves one value out of the material via resolveField (shared with
 //     VendToFile — the same static/session widening applies here).
@@ -147,8 +147,8 @@ func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []str
 		return ExitExecCommandNotFound, nil
 	}
 
-	// Step 3: attestation round-trip.
-	bc, attestErr := attestFresh(s, brokerURL)
+	// Step 3: a live bearer — cached where one is healthy, attested where not.
+	bc, attestErr := bearer(s, brokerURL)
 	if attestErr != nil {
 		// Distinguish a broker rejection (a non-2xx HTTP response, carried as a
 		// *BrokerError anywhere in the wrap chain) from a transport error.

@@ -49,7 +49,7 @@ const (
 
 // VendToFile is the vend-to-file entry point. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
-//  2. Runs the attestation round-trip via attestFresh.
+//  2. Resolves a bearer via the shared cache path (bearer).
 //  3. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
 //  4. With printShape, prints only the material's kind and field names (never
 //     a value) and returns — no file is written.
@@ -77,8 +77,8 @@ func VendToFile(s signer.Signer, brokerURL, credName, dest, field string, mode o
 		return ExitVendToFileKeyMissing, nil
 	}
 
-	// Step 2: attestation round-trip.
-	bc, attestErr := attestFresh(s, brokerURL)
+	// Step 2: a live bearer — cached where one is healthy, attested where not.
+	bc, attestErr := bearer(s, brokerURL)
 	if attestErr != nil {
 		// Distinguish a broker rejection (a non-2xx HTTP response, carried as a
 		// *BrokerError anywhere in the wrap chain) from a transport error.

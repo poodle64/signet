@@ -60,7 +60,7 @@ func controlCharName(c byte) string {
 
 // Headers is the vend-to-headers entry point. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
-//  2. Runs the attestation round-trip via attestFresh.
+//  2. Resolves a bearer via the shared cache path (bearer).
 //  3. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
 //  4. Resolves the one value the header carries — a single `static` field, or
 //     a `session`'s access_token — and prints it as the ONLY line written to
@@ -102,8 +102,8 @@ func Headers(s signer.Signer, brokerURL, credName, headerName, format string, ba
 		return ExitHeadersKeyMissing, nil
 	}
 
-	// Step 2: attestation round-trip.
-	bc, attestErr := attestFresh(s, brokerURL)
+	// Step 2: a live bearer — cached where one is healthy, attested where not.
+	bc, attestErr := bearer(s, brokerURL)
 	if attestErr != nil {
 		// Distinguish a broker rejection (a non-2xx HTTP response, carried as a
 		// *BrokerError anywhere in the wrap chain) from a transport error.
