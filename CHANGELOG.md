@@ -4,6 +4,12 @@ All notable changes to signet will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to calendar-based versioning (YYYY.M.x).
 
+## [Unreleased]
+
+### Fixed
+
+- `enrol` on the PIV backend now writes a new key into a card whose management key has been rotated, not only a card still on the factory default. Key generation is gated by the management key (signing is not — every slot is `PIN required for use: NEVER`), and enrolment assumed the default key as a constant, so the moment the card's key was changed no new identity could ever be added. `enrol` now tries the factory default first — a card still on defaults works exactly as before, which is load-bearing because the change has to land before the card is rotated — and, if that write is refused with an authentication error (`security status not satisfied`, or a retry-counted `piv.AuthErr`), falls back to retrieving the card-held management key via `Metadata(pin)` and retrying with it. This is the household's chosen card shape: the management key held on-card under PIN protection (`ykman piv access change-management-key --protect`). The one operation that now needs the PIN — enrolment — is attended and rare, so the PIN is never stored: it is typed once, at an interactive terminal, with echo disabled, and is deliberately not accepted from a flag, environment variable, or file (which would reintroduce the standing credential the design avoids). If stdin is not a terminal — the unattended container case — enrolment fails fast with a distinct, diagnosable error naming the interactive flow, rather than blocking forever on a PIN read; a hang inside a container is the worst failure mode here. Only two cases are supported, factory default and PIN-protected-on-card, keeping the operator's rotation runbook to one command. No change to the signing path: `sign`, `auth`, `headers`, `verify`, `vend-to-file`, and `exec` continue to work with no PIN, preserving unattended container signing. The rotated-card path awaits a manual run against the live card before it is rotated — that run is the verification gate for poodle64/portcullis#155 step 1. (poodle64/signet#9)
+
 ## [2026.8.1] - 2026-08-14
 
 ### Fixed

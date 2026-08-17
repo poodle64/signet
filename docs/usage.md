@@ -45,6 +45,8 @@ Prints the signing key's public half (SPKI DER, base64) to stdout for one-time e
 
 `enrol` is non-destructive and idempotent: it reads an existing key (a prior enrol, or a `ykman`-provisioned PIV key) rather than overwriting it, so running it again prints the same public key.
 
+On the PIV backend, writing a new key into an empty slot is gated by the card's management key. `enrol` tries the factory default first, so a card still on defaults just works. If the card has been rotated and its management key is held on-card under PIN protection (`ykman piv access change-management-key --protect`), `enrol` prompts for the PIV PIN (echo off) to retrieve that key and retry — so it **must be run at an interactive terminal**. The PIN is used once, only for this write, and is never accepted from a flag, environment variable, or file. Signing needs no PIN, so unattended flows (`sign`, `auth`, `headers`, `verify`, `vend-to-file`, `exec`) are unaffected; only enrolling into a rotated card is interactive.
+
 `--user-presence` is Secure-Enclave-only. It gates each subsequent signature behind Touch ID or the device passcode, which suits an interactive identity rather than an unattended one. On the TPM and PIV backends the flag has no effect.
 
 ### sign
