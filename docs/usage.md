@@ -124,7 +124,7 @@ signet verify --broker <url> [--credential <name>] [--backend <backend>] [--iden
 | `0` | Success: attestation accepted; credential resolvable (if `--credential` given). |
 | `1` | Unexpected transport or argument error. |
 | `2` | Key missing: no key enrolled for this identity and backend. |
-| `3` | Attestation rejected: the broker refused the attestation (4xx). |
+| `3` | Attestation rejected: the broker answered and refused this key (4xx) — a local enrolment problem (wrong or unenrolled identity), not a broker outage. |
 | `4` | Credential out of scope: the identity is attested but the credential is not in its vend scope (403). |
 | `5` | Credential not found: the credential name is absent from the broker's catalogue (404). |
 
@@ -145,9 +145,7 @@ Example for a machine not yet enrolled:
 ```text
 signet verify — broker: https://broker.example.internal
 
-  key              FAIL           no key enrolled: open ~/.signet/se-consumer.key: no such file or directory
-
-result: key missing (exit 2)
+  key              FAIL           no key enrolled: secure-enclave: no enrolled key at ~/.signet/se-consumer.key; run 'signet enrol' first
 ```
 
 ### headers
