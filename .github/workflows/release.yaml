@@ -66,6 +66,12 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.25'
+          # Without this, setup-go keeps the runner image's preinstalled Go when it
+          # satisfies the spec, so a floating '1.25' silently stops floating. That is
+          # how v2026.8.2 — cut solely to rebuild v2026.8.1 on a patched toolchain —
+          # produced another 1.25.12 binary and left #11's seven HIGH stdlib
+          # advisories exactly where they were.
+          check-latest: true
           cache-dependency-path: go.sum
 
       - name: Install PC/SC build deps (Linux go-piv/cgo backend)

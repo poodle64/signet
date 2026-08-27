@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [2026.8.4] - 2026-08-27
+
+### Fixed
+
+- The release and CI workflows now set `check-latest: true` on `actions/setup-go`, so a build actually picks up Go security patches. Without it setup-go keeps the runner image's preinstalled toolchain whenever it satisfies the spec, so the floating `go-version: '1.25'` silently stopped floating and pinned itself to whatever the image shipped. This is why v2026.8.2 — cut for no reason other than to rebuild v2026.8.1 on a patched toolchain, and whose release notes say exactly that — produced another Go 1.25.12 binary and left #11's seven HIGH stdlib advisories precisely where they were; v2026.8.3 then did the same. Go 1.25.13 (the fix release) and 1.25.14 had both been available for some time. The consumer-visible effect is unchanged behaviour and a binary that passes a Trivy `CRITICAL,HIGH` scan with `ignore-unfixed: true` again, which is what `poodle64/godswood` needs to keep signet in its production image and reach the broker at all. No source change to the tool itself. (#11)
+
 ## [2026.8.3] - 2026-08-27
 
 ### Fixed
