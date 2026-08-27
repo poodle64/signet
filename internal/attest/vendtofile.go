@@ -93,7 +93,7 @@ func VendToFile(s signer.Signer, brokerURL, credName, dest, field string, mode o
 
 	// Step 3: vend the credential.
 	endpoint := strings.TrimRight(brokerURL, "/") + "/v1/credentials/" + url.PathEscape(credName)
-	status, body, getErr := brokerGet(endpoint, bc.Key)
+	status, body, getErr := vendCredential(s, brokerURL, endpoint, bc)
 	if getErr != nil {
 		fmt.Fprintf(os.Stderr, "signet vend-to-file: network error: %v\n", getErr)
 		return 1, getErr

@@ -214,3 +214,158 @@ func TestHeaders_ReusesWarmCache(t *testing.T) {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
 }
+
+// rotatedKeyBroker serves the attest legs and a credential vend that refuses
+// one specific bearer with 401 — the shape a rotated-away key produces. The
+// broker deleted that key when a concurrent renew rotated it, so it is unknown,
+// while the local cache still holds it and still believes it fresh.
+type rotatedKeyBroker struct {
+	server    *httptest.Server
+	deadKey   string
+	vendCalls atomic.Int32
+	token     atomic.Int32
+}
+
+func newRotatedKeyBroker(t *testing.T, deadKey string) *rotatedKeyBroker {
+	t.Helper()
+	rb := &rotatedKeyBroker{deadKey: deadKey}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/v1/attest/challenge", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, challengeResult{
+			ChallengeID: "ch-rotated",
+			Nonce:       "rotatednonce",
+			ExpiresAt:   time.Now().Add(5 * time.Minute).Format(time.RFC3339),
+		})
+	})
+	mux.HandleFunc("/v1/attest/token", func(w http.ResponseWriter, _ *http.Request) {
+		rb.token.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		writeJSON(t, w, tokenResult{
+			Key:          "reattested-bearer-key",
+			KeyID:        "kid-r1",
+			ExpiresAt:    time.Now().Add(time.Hour).Format(time.RFC3339),
+			MaxExpiresAt: time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+		})
+	})
+	mux.HandleFunc("/v1/credentials/", func(w http.ResponseWriter, r *http.Request) {
+		rb.vendCalls.Add(1)
+		if r.Header.Get("Authorization") == "Bearer "+rb.deadKey {
+			http.Error(w, "unknown consumer key", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"material":{"kind":"static","fields":[{"name":"value","value":"v"}]}}`)) //nolint:errcheck
+	})
+
+	rb.server = httptest.NewServer(mux)
+	t.Cleanup(rb.server.Close)
+	return rb
+}
+
+// TestVendCredential_ReattestsOnRefusedBearer is the regression guard for the
+// wedge this fix exists to close. A bearer rotated away by a concurrent renew
+// is dead at the broker while the local cache still calls it fresh, so before
+// this change the SAME dead key was presented on every invocation for up to
+// renewWindow — and five refusals inside fifteen minutes trip the broker's
+// per-key auth-failure lock, 429-ing every credential that identity vends.
+func TestVendCredential_ReattestsOnRefusedBearer(t *testing.T) {
+	setTempHome(t)
+	rb := newRotatedKeyBroker(t, "rotated-away-key")
+	seedCache(t, rb.server.URL, "rotated-away-key", 2*time.Hour)
+
+	s := &stubSigner{sig: "c2ln"}
+	bc, err := bearer(s, rb.server.URL)
+	if err != nil {
+		t.Fatalf("bearer: %v", err)
+	}
+	if bc.Key != "rotated-away-key" {
+		t.Fatalf("precondition: cache should hand out the dead key, got %q", bc.Key)
+	}
+
+	status, _, err := vendCredential(s, rb.server.URL, rb.server.URL+"/v1/credentials/x", bc)
+	if err != nil {
+		t.Fatalf("vendCredential: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200 after re-attesting", status)
+	}
+	if n := rb.vendCalls.Load(); n != 2 {
+		t.Errorf("vend calls = %d, want 2 (the refusal then the retry)", n)
+	}
+	if n := rb.token.Load(); n != 1 {
+		t.Errorf("attestations = %d, want exactly 1", n)
+	}
+
+	// The dead bearer must be gone from the cache, or the next invocation
+	// presents it again and the pile-up resumes.
+	if cached := loadCache(rb.server.URL, mustFingerprint(t, stubSPKI)); cached == nil {
+		t.Error("cache missing after refresh")
+	} else if cached.Key == "rotated-away-key" {
+		t.Error("cache still holds the refused bearer")
+	}
+}
+
+// TestVendCredential_RetriesOnlyOnce keeps the recovery bounded: a broker that
+// refuses every bearer must not put signet in a loop against it.
+func TestVendCredential_RetriesOnlyOnce(t *testing.T) {
+	setTempHome(t)
+	rb := newRotatedKeyBroker(t, "reattested-bearer-key")
+	seedCache(t, rb.server.URL, "reattested-bearer-key", 2*time.Hour)
+
+	s := &stubSigner{sig: "c2ln"}
+	bc, err := bearer(s, rb.server.URL)
+	if err != nil {
+		t.Fatalf("bearer: %v", err)
+	}
+
+	status, _, err := vendCredential(s, rb.server.URL, rb.server.URL+"/v1/credentials/x", bc)
+	if err != nil {
+		t.Fatalf("vendCredential: %v", err)
+	}
+	if status != http.StatusUnauthorized {
+		t.Errorf("status = %d, want the 401 reported after one retry", status)
+	}
+	if n := rb.vendCalls.Load(); n != 2 {
+		t.Errorf("vend calls = %d, want exactly 2 — one retry, never a loop", n)
+	}
+}
+
+// TestVendCredential_PassesThroughNon401 guards the untouched paths: 403 and
+// 404 are the broker's settled answers about scope and catalogue membership,
+// and re-attesting cannot change either.
+func TestVendCredential_PassesThroughNon401(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+	}{
+		{"forbidden", http.StatusForbidden},
+		{"not found", http.StatusNotFound},
+		{"rate limited", http.StatusTooManyRequests},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setTempHome(t)
+			var vendCalls atomic.Int32
+			mux := http.NewServeMux()
+			mux.HandleFunc("/v1/credentials/", func(w http.ResponseWriter, _ *http.Request) {
+				vendCalls.Add(1)
+				w.WriteHeader(tc.status)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			bc := &bearerCache{Key: "k", ExpiresAt: time.Now().Add(time.Hour), MaxExpiresAt: time.Now().Add(24 * time.Hour)}
+			status, _, err := vendCredential(&stubSigner{sig: "c2ln"}, srv.URL, srv.URL+"/v1/credentials/x", bc)
+			if err != nil {
+				t.Fatalf("vendCredential: %v", err)
+			}
+			if status != tc.status {
+				t.Errorf("status = %d, want %d passed through", status, tc.status)
+			}
+			if n := vendCalls.Load(); n != 1 {
+				t.Errorf("vend calls = %d, want 1 — no retry on a non-401", n)
+			}
+		})
+	}
+}

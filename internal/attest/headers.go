@@ -118,7 +118,7 @@ func Headers(s signer.Signer, brokerURL, credName, headerName, format string, ba
 
 	// Step 3: vend the credential.
 	endpoint := strings.TrimRight(brokerURL, "/") + "/v1/credentials/" + url.PathEscape(credName)
-	status, body, getErr := brokerGet(endpoint, bc.Key)
+	status, body, getErr := vendCredential(s, brokerURL, endpoint, bc)
 	if getErr != nil {
 		fmt.Fprintf(os.Stderr, "signet headers: network error: %v\n", getErr)
 		return 1, getErr

@@ -69,7 +69,7 @@ The broker resolves the calling consumer by its enrolled public key (the SSH `au
 
 The canonical message signed is `{challenge_id}.{nonce}`; signet speaks only the `/v1/attest/{challenge,token,renew}` HTTP contract.
 
-Re-runs reuse the cache and renew the bearer as it ages: a cached token still more than 30 minutes from expiry is reused as-is; within 30 minutes of expiry signet renews it; a `401` on renew (or a token past its maximum lifetime) triggers a fresh attestation. The cache is keyed by broker URL and the enrolled public key's fingerprint (the first 16 hex characters of SHA-256 over the SPKI DER public key), so re-enrolling a new key for the same broker never serves a stale bearer minted for the old key.
+Re-runs reuse the cache and renew the bearer as it ages: a cached token still more than 30 minutes from expiry is reused as-is; within 30 minutes of expiry signet renews it; a `401` on renew (or a token past its maximum lifetime) triggers a fresh attestation. A cached bearer the broker refuses at the vend door (`401`) is likewise discarded, re-attested once, and the vend retried: a bearer can be dead before its local expiry — a concurrent renew rotates the old key away and the broker deletes it — and nothing local shows that, so without the retry the same dead key would be presented on every run until it reached the renew window. `403`, `404` and `429` are the broker's settled answers and are never retried. The cache is keyed by broker URL and the enrolled public key's fingerprint (the first 16 hex characters of SHA-256 over the SPKI DER public key), so re-enrolling a new key for the same broker never serves a stale bearer minted for the old key.
 
 ### agent
 

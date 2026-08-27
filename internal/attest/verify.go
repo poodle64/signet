@@ -105,7 +105,7 @@ func Verify(s signer.Signer, brokerURL, credName string) (exitCode int, err erro
 
 	// Step 3: probe the credential vend endpoint.
 	endpoint := strings.TrimRight(brokerURL, "/") + "/v1/credentials/" + url.PathEscape(credName)
-	status, body, getErr := brokerGet(endpoint, bc.Key)
+	status, body, getErr := vendCredential(s, brokerURL, endpoint, bc)
 	if getErr != nil {
 		fmt.Printf("  credential       FAIL           network error: %v\n", getErr)
 		return 1, getErr
