@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [2026.9.0] - 2026-09-01
+
+### Fixed
+
+- `golang.org/x/crypto` is bumped v0.52.0 → v0.55.0, clearing CVE-2026-56854 (GO-2026-6303, CRITICAL) from the released binary. The advisory is against `golang.org/x/crypto/ssh`: the `source-address` critical option in the `Permissions` an authentication callback returns was enforced only on the `PublicKeyCallback` and `VerifiedPublicKeyCallback` paths, so a source-address restriction set by `PasswordCallback`, `KeyboardInteractiveCallback`, `NoClientAuthCallback` or `GSSAPIWithMICConfig.AllowLogin` was silently ignored — an authentication bypass, and a widening of CVE-2026-46595. signet does not import `x/crypto/ssh` and never has: `x/crypto` is an indirect dependency reached only through `go-piv`'s use of `x/crypto/cryptobyte`, so the vulnerable symbols are not in the call graph and no signet behaviour changes. That unreachability is not the point. Trivy's `gobinary` scanner reports at MODULE granularity off the linked module list a Go binary carries in its own metadata, so the module's presence is the finding regardless of which packages were linked, and because the advisory has a fixed version, `ignore-unfixed: true` does not drop it. The consumer-visible effect is that `poodle64/godswood`'s `Build and Push Docker Image` workflow failed on every commit to `main` on 2026-09-01 (runs 33461462885, 33462036999, 33462598760): its Trivy `CRITICAL` gate correctly refused the signet binary baked into the production image, so the app could not build and therefore could not reach the broker at all.
+- This is the same shape as #11 one release ago and is closed the same way — by fixing the artefact, never by waiving the scanner. No `.trivyignore`, no severity waiver, no `--exit-code 0`: a gate that is taught to ignore this class stops being able to report the next one. Verified before tagging rather than after: the PUBLISHED v2026.8.4 `linux-amd64` binary was downloaded and scanned (`trivy rootfs --scanners vuln --severity CRITICAL,HIGH --ignore-unfixed`), reproducing exactly one finding — CVE-2026-56854, CRITICAL, `v0.52.0`, fixed in `0.55.0` — and confirming that #11's seven HIGH stdlib advisories are genuinely gone, so v2026.8.4's `check-latest` fix worked and the toolchain is not implicated this time. The same source tree with the bump, built `linux/amd64` under cgo on Go 1.25.14 exactly as the release workflow builds it, scans to zero findings and gates green. Runtime linkage (`libc`, `libpcsclite.so.1`) and the CLI surface are byte-for-byte what v2026.8.4 shipped. Bump only; no source change to the tool itself.
+
 ## [2026.8.4] - 2026-08-27
 
 ### Fixed
