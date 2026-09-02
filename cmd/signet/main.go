@@ -28,7 +28,7 @@
 //	signet verify  [flags] --broker <url> [--credential <name>]
 //	signet headers [flags] --broker <url> --credential <name> [--header <name>] [--format bearer|raw] [--bare]
 //	signet vend-to-file [flags] --broker <url> [--field <name>] [--mode <octal>] [--print-shape] <name> <dest>
-//	signet exec    [flags] --broker <url> --credential <name> --env-var <NAME> [--field <name>] -- <command> [args...]
+//	signet exec    [flags] --broker <url> --credential <name> {--env-var <NAME> [--field <name>] | --field <logical>=<ENV_VAR> [...]} -- <command> [args...]
 //	signet agent   --bind <socket>=<slot> [--bind ...] [--backend piv]
 //	signet version
 //	signet doctor  [flags]

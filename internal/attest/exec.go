@@ -1,11 +1,14 @@
-// exec.go: 'signet exec' — attest, vend a credential, set it as an
-// environment variable on a child process, and replace the current process
-// image with that child, so the value passes straight from the broker into
-// the child's own environment and never touches the parent session's
+// exec.go: 'signet exec' — attest, vend a credential, set one or more of its
+// fields as environment variables on a child process, and replace the current
+// process image with that child, so the values pass straight from the broker
+// into the child's own environment and never touch the parent session's
 // environment, a shell variable, a file, or a transcript. It composes the
 // same attestation leg as Headers/VendToFile with the same credential-vend
 // leg, then reuses VendToFile's resolveField widening (a single or selected
-// static field, or a session's access_token) rather than reimplementing it.
+// static field, or a session's access_token) rather than reimplementing it —
+// one attestation and one vend deliver every field, however many the caller
+// maps (#10: a two-field credential used to need nested exec invocations,
+// attesting twice for one credential).
 //
 // exec exists for stdio MCP servers and similar child processes that read a
 // credential from their own environment at start-up. headers solves the
@@ -64,6 +67,29 @@ const (
 	ExitExecCommandNotFound = 7
 )
 
+// FieldEnv maps one logical field of the vended credential to one
+// environment variable on the child. Field may be empty, which selects the
+// single-value widening resolveField already performs (the sole static
+// field, or a session's access_token) — the original single-field --env-var
+// form, unchanged. A non-empty Field names the logical field exactly, the
+// way vend-to-file's --field does; several FieldEnv values deliver a
+// multi-field credential in one attestation and one vend.
+//
+// Duplicate EnvVar names within one call are the caller's error to refuse
+// (the cmd layer does): this package resolves and sets them in order, which
+// would otherwise silently let the last one win.
+type FieldEnv struct {
+	Field  string
+	EnvVar string
+}
+
+// envSetting is one resolved environment assignment for the child: the value
+// FieldEnv resolved to, keyed by the environment variable it lands in.
+type envSetting struct {
+	EnvVar string
+	Value  string
+}
+
 // Exec is the vend-and-exec entry point. It:
 //  1. Confirms a key is enrolled (PublicKeyDER succeeds).
 //  2. Resolves argv[0] to an executable via exec.LookPath, so a bare command
@@ -72,13 +98,15 @@ const (
 //     the broker legs so a typo'd command spends no vend and leaves no
 //     speculative entry in the broker's audit log.
 //  3. Resolves a bearer via the shared cache path (bearer).
-//  4. Vends credName via GET /v1/credentials/{credName} with the minted bearer.
-//  5. Resolves one value out of the material via resolveField (shared with
-//     VendToFile — the same static/session widening applies here).
+//  4. Vends credName via GET /v1/credentials/{credName} with the minted bearer —
+//     once, whatever the number of fields.
+//  5. Resolves one value per FieldEnv out of the material: an empty Field via
+//     resolveField (shared with VendToFile — the same static/session widening
+//     applies), a named Field via fieldByName.
 //  6. Builds the child's environment: the current process environment
-//     (os.Environ()), with envVar set to the vended value, REPLACING any
-//     existing entry of that name rather than appending a duplicate (see
-//     buildEnv).
+//     (os.Environ()), with each mapped variable set to its vended value,
+//     REPLACING any existing entry of that name rather than appending a
+//     duplicate (see buildEnvs).
 //  7. Replaces the current process image with argv via syscall.Exec.
 //
 // Step 7 is why this command exists and why it does not use os/exec's
@@ -109,12 +137,12 @@ const (
 //     VendToFile each print exactly one confirmation line; exec must not,
 //     because the child is about to speak the MCP stdio protocol on stdout,
 //     and any signet chatter ahead of it would corrupt the JSON-RPC stream.
-//   - The vended value never appears in argv (it is set via the child's
-//     environment only), so it is never visible to `ps` or any other
+//   - The vended values never appear in argv (they are set via the child's
+//     environment only), so they are never visible to `ps` or any other
 //     argv-reading tool.
 //
 // Every diagnostic — including every failure path — goes to stderr, and
-// never carries the credential value or the minted bearer: on failure the
+// never carries a credential value or the minted bearer: on failure the
 // message names only the failure class (key missing, broker rejection, out
 // of scope, not found, the shape of the unusable material, or the command
 // not being found), never a secret.
@@ -124,7 +152,7 @@ const (
 // caller should exit with that code. A non-nil error with exit code 1 is an
 // unexpected transport, encoding, or exec failure. Returning at all — of any
 // kind — means the child was never launched.
-func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []string) (exitCode int, err error) {
+func Exec(s signer.Signer, brokerURL, credName string, fields []FieldEnv, argv []string) (exitCode int, err error) {
 	// Step 1: confirm a key is enrolled.
 	_, keyErr := s.PublicKeyDER()
 	if keyErr != nil {
@@ -162,7 +190,7 @@ func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []str
 		return 1, attestErr
 	}
 
-	// Step 3: vend the credential.
+	// Step 4: vend the credential — once, for every field.
 	endpoint := strings.TrimRight(brokerURL, "/") + "/v1/credentials/" + url.PathEscape(credName)
 	status, body, getErr := vendCredential(s, brokerURL, endpoint, bc)
 	if getErr != nil {
@@ -181,20 +209,30 @@ func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []str
 		return 1, fmt.Errorf("unexpected broker %d on credential vend", status)
 	}
 
-	// Step 4: parse the envelope and resolve one value out of it.
+	// Step 5: parse the envelope and resolve one value per mapping out of it.
 	var env credentialEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
 		fmt.Fprintf(os.Stderr, "signet exec: credential %q: unusable material (envelope did not parse)\n", credName)
 		return ExitExecUnusableMaterial, nil
 	}
-	value, resolveErr := resolveField(env.Material, field)
-	if resolveErr != nil {
-		fmt.Fprintf(os.Stderr, "signet exec: credential %q: %v\n", credName, resolveErr)
-		return ExitExecUnusableMaterial, nil
+	settings := make([]envSetting, 0, len(fields))
+	for _, fe := range fields {
+		var value string
+		var resolveErr error
+		if fe.Field == "" {
+			value, resolveErr = resolveField(env.Material, "")
+		} else {
+			value, resolveErr = fieldByName(env.Material, fe.Field)
+		}
+		if resolveErr != nil {
+			fmt.Fprintf(os.Stderr, "signet exec: credential %q: %v\n", credName, resolveErr)
+			return ExitExecUnusableMaterial, nil
+		}
+		settings = append(settings, envSetting{EnvVar: fe.EnvVar, Value: value})
 	}
 
 	// Step 6: build the child's environment.
-	childEnv := buildEnv(os.Environ(), envVar, value)
+	childEnv := buildEnvs(os.Environ(), settings)
 
 	// Step 7: replace this process with argv. Does not return on success.
 	execErr := syscall.Exec(argv0, argv, childEnv)
@@ -202,13 +240,50 @@ func Exec(s signer.Signer, brokerURL, credName, envVar, field string, argv []str
 	return 1, execErr
 }
 
-// buildEnv returns environ with name=value set, replacing any existing entry
-// named name rather than appending a second one. Appending a duplicate
-// key=value entry to an environment slice is undefined behaviour across libc
-// implementations — some honour the first occurrence, some the last — so any
-// existing entry for name is dropped before the new one is appended, leaving
-// exactly one entry for name in the result.
-func buildEnv(environ []string, name, value string) []string {
+// fieldByName returns the value of the named logical field of m: a static
+// field by exact name match, or a session's access_token. A name that is not
+// present is an error naming the available fields, never a guess — the same
+// refusal shape resolveField uses for --field on the single-value path, so a
+// mistyped mapping fails loudly instead of setting an empty variable.
+func fieldByName(m credentialMaterial, name string) (string, error) {
+	switch m.Kind {
+	case "static":
+		for _, f := range m.Fields {
+			if f.Name == name {
+				return f.Value, nil
+			}
+		}
+		return "", fmt.Errorf("unusable material (--field %q not found; available: %s)", name, strings.Join(staticFieldNames(m.Fields), ", "))
+	case "session":
+		if name == "access_token" {
+			if m.AccessToken == "" {
+				return "", fmt.Errorf("unusable material (session has no access_token)")
+			}
+			return m.AccessToken, nil
+		}
+		return "", fmt.Errorf("unusable material (--field %q not found; available: access_token)", name)
+	default:
+		return "", fmt.Errorf("unusable material (kind %q not supported)", m.Kind)
+	}
+}
+
+// buildEnvs returns environ with every setting set, replacing any existing
+// entry of each name rather than appending a second one. Appending a
+// duplicate key=value entry to an environment slice is undefined behaviour
+// across libc implementations — some honour the first occurrence, some the
+// last — so any existing entry for a mapped name is dropped before the new
+// one is appended, leaving exactly one entry per mapped name in the result.
+func buildEnvs(environ []string, settings []envSetting) []string {
+	out := environ
+	for _, s := range settings {
+		out = appendEnv(out, s.EnvVar, s.Value)
+	}
+	return out
+}
+
+// appendEnv returns environ with name=value set, replacing any existing
+// entry named name rather than appending a second one (see buildEnvs).
+func appendEnv(environ []string, name, value string) []string {
 	prefix := name + "="
 	out := make([]string, 0, len(environ)+1)
 	for _, e := range environ {

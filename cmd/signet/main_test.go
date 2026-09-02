@@ -362,3 +362,107 @@ func TestRunExecFlagsAfterSeparatorNotParsedBySignet(t *testing.T) {
 		t.Errorf("stderr = %q, want signet's own flag parsing to be untouched by the child's \"--broker\" argv[0]", stderr)
 	}
 }
+
+// TestRunExecFieldMappingValidation pins the cmd-layer gate for the
+// multi-field --field <logical>=<ENV_VAR> form (#10): every malformed or
+// self-contradictory mapping combination must be refused with exit 1 and the
+// message that names the right refusal, BEFORE any signer or broker work.
+// Message-level assertions, because a bare exit 1 could equally be a missing
+// required flag — the same trap TestRunHeadersBareWithHeaderRefused names.
+func TestRunExecFieldMappingValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantMsg string
+	}{
+		{
+			name:    "mapping combined with --env-var is refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--env-var", "MY_TOKEN", "--field", "a=VAR_A", "--", "true"},
+			wantMsg: "--env-var cannot be combined with --field <logical>=<ENV_VAR>",
+		},
+		{
+			name:    "mixed mapping and selector forms are refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--field", "a", "--field", "b=VAR_B", "--", "true"},
+			wantMsg: "not both",
+		},
+		{
+			name:    "two bare selectors are refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--env-var", "MY_TOKEN", "--field", "a", "--field", "b", "--", "true"},
+			wantMsg: "at most once",
+		},
+		{
+			name:    "mapping with an empty logical name is refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--field", "=VAR_A", "--", "true"},
+			wantMsg: "not a <logical>=<ENV_VAR> mapping",
+		},
+		{
+			name:    "mapping with an empty env var name is refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--field", "a=", "--", "true"},
+			wantMsg: "not a <logical>=<ENV_VAR> mapping",
+		},
+		{
+			name:    "mapping with '=' inside the env var name is refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--field", "a=B=C", "--", "true"},
+			wantMsg: "invalid environment variable name",
+		},
+		{
+			name:    "the same logical field mapped twice is refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--field", "a=VAR_A", "--field", "a=VAR_B", "--", "true"},
+			wantMsg: "logical field \"a\" more than once",
+		},
+		{
+			name:    "the same env var mapped twice is refused",
+			args:    []string{"--broker", "https://broker.internal", "--credential", "my-cred", "--field", "a=VAR_A", "--field", "b=VAR_A", "--", "true"},
+			wantMsg: "environment variable \"VAR_A\" more than once",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var code int
+			stderr := captureStderr(t, func() {
+				code = runExec(tc.args)
+			})
+			if code != 1 {
+				t.Errorf("runExec(%v) = %d, want 1 (refusal before any signer or broker work)", tc.args, code)
+			}
+			if !strings.Contains(stderr, tc.wantMsg) {
+				t.Errorf("stderr = %q, want it to contain %q", stderr, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// TestRunExecFieldMappingGetsPastFlagGate verifies the flip side: a
+// well-formed multi-field mapping passes every cmd-layer check, so the run
+// proceeds into signer/broker territory and fails THERE (an unreachable
+// broker on this hardware-free path) rather than for any flag reason. A bare
+// exit code proves nothing — the stderr must be free of every flag refusal
+// this package pins.
+func TestRunExecFieldMappingGetsPastFlagGate(t *testing.T) {
+	args := []string{
+		"--broker", "http://127.0.0.1:0", "--credential", "my-cred",
+		"--field", "aws_access_key_id=AWS_ACCESS_KEY_ID",
+		"--field", "aws_secret_access_key=AWS_SECRET_ACCESS_KEY",
+		"--", "true",
+	}
+	stderr := captureStderr(t, func() {
+		runExec(args)
+	})
+	for _, refusal := range []string{
+		"--env-var is required",
+		"--env-var cannot be combined",
+		"not both",
+		"at most once",
+		"not a <logical>=<ENV_VAR> mapping",
+		"invalid environment variable name",
+		"more than once",
+		"missing -- separator",
+		"a command is required",
+		"--broker is required",
+		"--credential is required",
+	} {
+		if strings.Contains(stderr, refusal) {
+			t.Errorf("stderr = %q, want a well-formed mapping to clear the flag gate (hit %q)", stderr, refusal)
+		}
+	}
+}
