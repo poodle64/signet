@@ -86,10 +86,9 @@ func Verify(s signer.Signer, brokerURL, credName string) (exitCode int, err erro
 		var be *BrokerError
 		if errors.As(attestErr, &be) {
 			// Wording is deliberate: a 4xx means the broker ANSWERED, so this
-			// line must not read as a broker fault.
+			// line must not read as a broker fault (attestRejectedHint).
 			fmt.Printf("  attest           FAIL           broker answered and refused this key: %v\n", attestErr)
-			fmt.Printf("                                  local, not an outage: this key is not enrolled for the identity\n")
-			fmt.Printf("                                  in use — --identity <name> selects it; unset uses the default.\n")
+			fmt.Printf("                                  %s\n", attestRejectedHint())
 			return ExitVerifyAttestRejected, nil
 		}
 		// Transport or unexpected error: propagate so the caller sees exit 1.

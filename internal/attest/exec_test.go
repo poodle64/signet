@@ -37,19 +37,29 @@ func TestExec_KeyMissing(t *testing.T) {
 }
 
 // TestExec_AttestRejected verifies exit code 3 when the broker returns 401
-// on the attestation challenge.
+// on the attestation challenge, and that the guidance line steers the reader
+// local — the shared attestRejectedHint wording (the estate finding: a bare
+// "broker 401" reads like a broker fault and sends the reader off diagnosing
+// the wrong system).
 func TestExec_AttestRejected(t *testing.T) {
 	setTempHome(t)
 	srv := rejectingBroker(t, http.StatusUnauthorized)
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Exec(s, srv.URL, "my-cred", "MY_TOKEN", "", []string{"true"})
+	var code int
+	var err error
+	_, stderr := captureHeadersOutput(t, func() {
+		code, err = Exec(s, srv.URL, "my-cred", "MY_TOKEN", "", []string{"true"})
+	})
 	if err != nil {
 		t.Fatalf("Exec: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitExecAttestRejected {
 		t.Errorf("exit code = %d, want %d (ExitExecAttestRejected)", code, ExitExecAttestRejected)
+	}
+	if !strings.Contains(stderr, "local, not an outage") {
+		t.Errorf("stderr = %q, want the local-not-an-outage guidance after a broker-rejected attestation", stderr)
 	}
 }
 

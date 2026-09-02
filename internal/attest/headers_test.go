@@ -518,19 +518,30 @@ func TestHeaders_KeyMissing(t *testing.T) {
 }
 
 // TestHeaders_AttestRejected verifies exit code 3 when the broker returns 401
-// on the attestation challenge (resolves to a broker-rejection, not transport).
+// on the attestation challenge (resolves to a broker-rejection, not transport),
+// and that the guidance line steers the reader local: headers is the path every
+// headersHelper consumer runs, and a bare "broker 401" here sent readers off
+// diagnosing the broker when the usual cause is the default identity's key not
+// being enrolled (the estate finding; verify had the wording, headers did not).
 func TestHeaders_AttestRejected(t *testing.T) {
 	setTempHome(t)
 	srv := rejectingBroker(t, http.StatusUnauthorized)
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
+	var code int
+	var err error
+	_, stderr := captureHeadersOutput(t, func() {
+		code, err = Headers(s, srv.URL, "my-cred", "Authorization", "bearer", false)
+	})
 	if err != nil {
 		t.Fatalf("Headers: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitHeadersAttestRejected {
 		t.Errorf("exit code = %d, want %d (ExitHeadersAttestRejected)", code, ExitHeadersAttestRejected)
+	}
+	if !strings.Contains(stderr, "local, not an outage") {
+		t.Errorf("stderr = %q, want the local-not-an-outage guidance after a broker-rejected attestation", stderr)
 	}
 }
 

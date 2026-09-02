@@ -355,7 +355,10 @@ func TestVendToFile_KeyMissing(t *testing.T) {
 }
 
 // TestVendToFile_AttestRejected verifies exit code 3 when the broker returns
-// 401 on the attestation challenge.
+// 401 on the attestation challenge, and that the guidance line steers the
+// reader local — the shared attestRejectedHint wording (the estate finding:
+// a bare "broker 401" reads like a broker fault and sends the reader off
+// diagnosing the wrong system).
 func TestVendToFile_AttestRejected(t *testing.T) {
 	setTempHome(t)
 	srv := rejectingBroker(t, http.StatusUnauthorized)
@@ -363,12 +366,19 @@ func TestVendToFile_AttestRejected(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "dest.txt")
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := VendToFile(s, srv.URL, "my-cred", dest, "", 0o600, false)
+	var code int
+	var err error
+	_, stderr := captureHeadersOutput(t, func() {
+		code, err = VendToFile(s, srv.URL, "my-cred", dest, "", 0o600, false)
+	})
 	if err != nil {
 		t.Fatalf("VendToFile: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVendToFileAttestRejected {
 		t.Errorf("exit code = %d, want %d (ExitVendToFileAttestRejected)", code, ExitVendToFileAttestRejected)
+	}
+	if !strings.Contains(stderr, "local, not an outage") {
+		t.Errorf("stderr = %q, want the local-not-an-outage guidance after a broker-rejected attestation", stderr)
 	}
 	if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
 		t.Errorf("dest must not be created on failure; stat error = %v", statErr)

@@ -120,19 +120,29 @@ func TestVerify_KeyMissing(t *testing.T) {
 }
 
 // TestVerify_AttestRejected verifies exit code 3 when the broker returns 401
-// on the attestation challenge (resolves to a broker-rejection, not transport).
+// on the attestation challenge (resolves to a broker-rejection, not transport),
+// and that the guidance line steers the reader local: a raw "broker 401" reads
+// like a broker fault and sends the reader off diagnosing the wrong system
+// (the estate finding behind this wording).
 func TestVerify_AttestRejected(t *testing.T) {
 	setTempHome(t)
 	srv := rejectingBroker(t, http.StatusUnauthorized)
 	defer srv.Close()
 
 	s := &stubSigner{sig: "c3R1YnNpZw=="}
-	code, err := Verify(s, srv.URL, "")
+	var code int
+	var err error
+	out := captureVerifyStdout(t, func() {
+		code, err = Verify(s, srv.URL, "")
+	})
 	if err != nil {
 		t.Fatalf("Verify: unexpected non-nil error for typed exit: %v", err)
 	}
 	if code != ExitVerifyAttestRejected {
 		t.Errorf("exit code = %d, want %d (ExitVerifyAttestRejected)", code, ExitVerifyAttestRejected)
+	}
+	if !strings.Contains(out, "local, not an outage") {
+		t.Errorf("stdout = %q, want the local-not-an-outage guidance after a broker-rejected attestation", out)
 	}
 }
 

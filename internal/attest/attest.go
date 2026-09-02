@@ -48,6 +48,21 @@ func (e *BrokerError) Error() string {
 	return fmt.Sprintf("broker %d: %s", e.Status, e.Body)
 }
 
+// attestRejectedHint is the ONE guidance line every consumer subcommand
+// (verify, headers, vend-to-file, exec) prints after a broker-rejected
+// attestation. A 4xx there means the broker ANSWERED — the refusal is local
+// — but the raw error ("broker 401: ...") reads exactly like a broker fault,
+// and the reader gets sent off diagnosing the wrong system: the usual cause
+// is the default identity's key simply not being enrolled with this broker.
+// verify alone carried this wording until 2026-09-02 while headers,
+// vend-to-file and exec — the paths a real consumer actually takes, headers
+// above all, as every headersHelper runs it — printed the bare 401; four
+// hand-maintained copies would drift the same way, hence one shared line.
+func attestRejectedHint() string {
+	return "local, not an outage: this key is not enrolled for the identity in use — " +
+		"--identity selects the secure-enclave key, --slot the PIV slot; unset uses the default"
+}
+
 // canonicalMessage constructs the UTF-8 message the broker's canonical form
 // prescribes: "{challenge_id}.{nonce}".
 // This is the string that must be SHA-256 digested and signed.
